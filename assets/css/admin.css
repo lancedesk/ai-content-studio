@@ -1,0 +1,245 @@
+/* Admin styles for AI Content Studio */
+
+.acs-admin-wrap {
+    margin: 20px 0;
+}
+
+.acs-header {
+    background: #fff;
+    border: 1px solid #c3c4c7;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.acs-header h1 {
+    margin: 0 0 10px 0;
+    color: #1d2327;
+}
+
+.acs-header p {
+    margin: 0;
+    color: #646970;
+}
+
+.acs-card {
+    background: #fff;
+    border: 1px solid #c3c4c7;
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 1px 1px rgba(0,0,0,.04);
+}
+
+.acs-card h2 {
+    margin-top: 0;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #c3c4c7;
+}
+
+.acs-form-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.acs-form-table th {
+    text-align: left;
+    padding: 20px 10px 20px 0;
+    width: 200px;
+    vertical-align: top;
+}
+
+.acs-form-table td {
+    padding: 15px 10px 15px 0;
+}
+
+.acs-input {
+    width: 400px;
+    max-width: 100%;
+}
+
+.acs-textarea {
+    width: 100%;
+    height: 120px;
+    max-width: 600px;
+}
+
+.acs-button {
+    background: #0073aa;
+    color: #fff;
+    border: none;
+    padding: 10px 20px;
+    cursor: pointer;
+    border-radius: 3px;
+    text-decoration: none;
+    display: inline-block;
+}
+
+.acs-button:hover {
+    background: #005a87;
+    color: #fff;
+}
+
+.acs-button.secondary {
+    background: #f3f5f6;
+    color: #0073aa;
+    border: 1px solid #c3c4c7;
+}
+
+.acs-button.secondary:hover {
+    background: #f1f1f1;
+}
+
+.acs-notice {
+    padding: 12px;
+    margin: 5px 0 15px;
+    border-left: 4px solid;
+}
+
+.acs-notice.success {
+    background: #fff;
+    border-left-color: #00a32a;
+    color: #00a32a;
+}
+
+.acs-notice.error {
+    background: #fff;
+    border-left-color: #d63638;
+    color: #d63638;
+}
+
+.acs-notice.warning {
+    background: #fff;
+    border-left-color: #dba617;
+    color: #dba617;
+}
+
+.acs-stats {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 20px;
+}
+
+.acs-stat-box {
+    background: #fff;
+    border: 1px solid #c3c4c7;
+    padding: 20px;
+    text-align: center;
+    flex: 1;
+}
+
+.acs-stat-number {
+    font-size: 32px;
+    font-weight: bold;
+    color: #0073aa;
+    display: block;
+}
+
+.acs-stat-label {
+    color: #646970;
+    font-size: 14px;
+}
+
+.acs-loading {
+    display: none;
+    text-align: center;
+    padding: 20px;
+}
+
+.acs-spinner {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 3px solid rgba(0,115,170,.3);
+    border-radius: 50%;
+    border-top-color: #0073aa;
+    animation: spin 1s ease-in-out infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.acs-progress {
+    width: 100%;
+    height: 20px;
+    background-color: #f1f1f1;
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.acs-progress-bar {
+    height: 100%;
+    background-color: #0073aa;
+    border-radius: 10px;
+    transition: width 0.3s ease;
+}
+
+.acs-tabs {
+    border-bottom: 1px solid #c3c4c7;
+    margin-bottom: 20px;
+}
+
+.acs-tab {
+    display: inline-block;
+    padding: 10px 20px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: #0073aa;
+    text-decoration: none;
+    border-bottom: 2px solid transparent;
+}
+
+.acs-tab.active {
+    border-bottom-color: #0073aa;
+    font-weight: bold;
+}
+
+.acs-tab-content {
+    display: none;
+}
+
+.acs-tab-content.active {
+    display: block;
+}
+
+.acs-provider-status {
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 3px;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+.acs-provider-status.connected {
+    background: #d1e7dd;
+    color: #0f5132;
+}
+
+.acs-provider-status.disconnected {
+    background: #f8d7da;
+    color: #842029;
+}
+
+.acs-api-test {
+    margin-left: 10px;
+}
+
+@media (max-width: 782px) {
+    .acs-stats {
+        flex-direction: column;
+    }
+    
+    .acs-input {
+        width: 100%;
+    }
+    
+    .acs-form-table th,
+    .acs-form-table td {
+        display: block;
+        width: 100%;
+    }
+    
+    .acs-form-table th {
+        padding-bottom: 5px;
+    }
+}

@@ -1,0 +1,5 @@
+# Ignore tests folder and all its contents
+tests/
+
+# Ignore planning folder and all its contents
+planning/

@@ -1,0 +1,83 @@
+/* Public styles for AI Content Studio */
+
+/* Schema markup styling - hidden by default */
+.acs-schema {
+    display: none;
+}
+
+/* Content wrapper for generated posts */
+.acs-generated-content {
+    position: relative;
+}
+
+/* Optional: Add a subtle indicator for AI-generated content */
+.acs-generated-content::after {
+    content: '';
+    /* Intentionally minimal - content should appear natural */
+}
+
+/* Ensure proper spacing for generated content */
+.acs-generated-content h1,
+.acs-generated-content h2,
+.acs-generated-content h3,
+.acs-generated-content h4,
+.acs-generated-content h5,
+.acs-generated-content h6 {
+    margin-top: 1.5em;
+    margin-bottom: 0.5em;
+}
+
+.acs-generated-content p {
+    margin-bottom: 1em;
+    line-height: 1.6;
+}
+
+.acs-generated-content ul,
+.acs-generated-content ol {
+    margin-bottom: 1em;
+    padding-left: 2em;
+}
+
+.acs-generated-content li {
+    margin-bottom: 0.5em;
+}
+
+/* Featured image styling for generated posts */
+.acs-featured-image {
+    max-width: 100%;
+    height: auto;
+    margin-bottom: 1em;
+}
+
+/* Table of contents styling if generated */
+.acs-toc {
+    background: #f9f9f9;
+    border: 1px solid #ddd;
+    padding: 1em;
+    margin: 1.5em 0;
+    border-radius: 5px;
+}
+
+.acs-toc h3 {
+    margin-top: 0;
+    margin-bottom: 0.5em;
+    font-size: 1.1em;
+}
+
+.acs-toc ul {
+    margin: 0;
+    padding-left: 1.5em;
+}
+
+.acs-toc li {
+    margin-bottom: 0.25em;
+}
+
+.acs-toc a {
+    text-decoration: none;
+    color: #0073aa;
+}
+
+.acs-toc a:hover {
+    text-decoration: underline;
+}

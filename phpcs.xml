@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<ruleset name="AI Content Studio">
+    <description>PHP_CodeSniffer ruleset for AI Content Studio (WordPress standards recommended)</description>
+
+    <!-- Prefer the WordPress standard if installed locally. -->
+    <rule ref="WordPress"/>
+
+    <!-- Project-specific overrides -->
+    <rule ref="PSR12" severity="0"/>
+
+    <file>./</file>
+</ruleset>
