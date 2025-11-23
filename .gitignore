@@ -3,3 +3,11 @@ tests/
 
 # Ignore planning folder and all its contents
 planning/
+
+# Local config / secrets
+wp-config.php
+*.log
+wp-content/uploads/
+node_modules/
+.vscode/
+.DS_Store
