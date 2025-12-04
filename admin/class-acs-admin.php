@@ -167,18 +167,24 @@ class ACS_Admin {
             wp_send_json_error( __( 'You do not have permission to revalidate this post.', 'ai-content-studio' ) );
         }
 
-        if ( file_exists( ACS_PLUGIN_PATH . 'generators/class-acs-content-generator.php' ) ) {
-            require_once ACS_PLUGIN_PATH . 'generators/class-acs-content-generator.php';
-            $generator = new ACS_Content_Generator();
-            $validation = $generator->validate_post_by_id( $post_id );
-            if ( $validation === true ) {
-                wp_send_json_success( array( 'valid' => true, 'message' => __( 'Post content meets validation rules.', 'ai-content-studio' ) ) );
-            } else {
-                wp_send_json_success( array( 'valid' => false, 'errors' => $validation ) );
-            }
+        // Use Generator Loader to get generator instance
+        if ( ! class_exists( 'ACS_Generator_Loader' ) ) {
+            require_once ACS_PLUGIN_PATH . 'includes/class-acs-generator-loader.php';
         }
-
-        wp_send_json_error( __( 'Content generator unavailable.', 'ai-content-studio' ) );
+        
+        $generator = ACS_Generator_Loader::get_instance();
+        
+        if ( is_wp_error( $generator ) ) {
+            error_log( '[ACS][REVALIDATE] Failed to load generator: ' . $generator->get_error_message() );
+            wp_send_json_error( __( 'Content generator unavailable.', 'ai-content-studio' ) );
+        }
+        
+        $validation = $generator->validate_post_by_id( $post_id );
+        if ( $validation === true ) {
+            wp_send_json_success( array( 'valid' => true, 'message' => __( 'Post content meets validation rules.', 'ai-content-studio' ) ) );
+        } else {
+            wp_send_json_success( array( 'valid' => false, 'errors' => $validation ) );
+        }
     }
 
     /**
@@ -198,20 +204,27 @@ class ACS_Admin {
             wp_send_json_error( __( 'You do not have permission to retry generation for this post.', 'ai-content-studio' ) );
         }
 
-        if ( file_exists( ACS_PLUGIN_PATH . 'generators/class-acs-content-generator.php' ) ) {
-            require_once ACS_PLUGIN_PATH . 'generators/class-acs-content-generator.php';
-            $generator = new ACS_Content_Generator();
-            $result = $generator->retry_generation_for_post( $post_id );
-            if ( is_wp_error( $result ) ) {
-                wp_send_json_error( $result->get_error_message() );
-            }
-
-            // Return updated report if available
-            $report = get_post_meta( $post_id, '_acs_generation_report', true );
-            wp_send_json_success( array( 'post_id' => $post_id, 'report' => $report, 'edit_link' => get_edit_post_link( $post_id ) ) );
+        // Use Generator Loader to get generator instance
+        if ( ! class_exists( 'ACS_Generator_Loader' ) ) {
+            require_once ACS_PLUGIN_PATH . 'includes/class-acs-generator-loader.php';
+        }
+        
+        $generator = ACS_Generator_Loader::get_instance();
+        
+        if ( is_wp_error( $generator ) ) {
+            error_log( '[ACS][GENERATOR] Failed to load generator: ' . $generator->get_error_message() );
+            wp_send_json_error( __( 'Content generator unavailable.', 'ai-content-studio' ) );
+            return;
+        }
+        
+        $result = $generator->retry_generation_for_post( $post_id );
+        if ( is_wp_error( $result ) ) {
+            wp_send_json_error( $result->get_error_message() );
         }
 
-        wp_send_json_error( __( 'Content generator unavailable.', 'ai-content-studio' ) );
+        // Return updated report if available
+        $report = get_post_meta( $post_id, '_acs_generation_report', true );
+        wp_send_json_success( array( 'post_id' => $post_id, 'report' => $report, 'edit_link' => get_edit_post_link( $post_id ) ) );
     }
 
     /**
@@ -371,7 +384,8 @@ class ACS_Admin {
      * @since    1.0.0
      */
     public function display_analytics_page() {
-        include_once ACS_PLUGIN_PATH . 'admin/partials/analytics.php';
+        // Use new data-driven analytics dashboard
+        include_once ACS_PLUGIN_PATH . 'admin/templates/analytics-dashboard.php';
     }
 
     /**
@@ -468,6 +482,20 @@ class ACS_Admin {
             <div id="acs-log-modal" style="display:none;margin-top:20px;">
                 <h2><?php esc_html_e( 'Log Detail', 'ai-content-studio' ); ?></h2>
                 <pre id="acs-log-json" style="white-space:pre-wrap;background:#f7f7f7;padding:10px;border:1px solid #ddd;max-height:400px;overflow:auto;"></pre>
+            </div>
+
+            <div class="card" style="margin-top:20px;">
+                <h2><?php esc_html_e( 'Parser / Repair Debug Log', 'ai-content-studio' ); ?></h2>
+                <?php
+                $debug_log = ACS_PLUGIN_PATH . 'generators/acs_content_debug.log';
+                if ( file_exists( $debug_log ) ) {
+                    $log_contents = file_get_contents( $debug_log );
+                    echo '<pre style="white-space:pre-wrap;background:#111;color:#d6d6d6;padding:12px;border-radius:4px;max-height:320px;overflow:auto;">' . esc_html( $log_contents ) . '</pre>';
+                    echo '<p><em>' . esc_html__( 'This log shows raw provider output and any repaired JSON that the parser produced. Share entries with support if you need help.', 'ai-content-studio' ) . '</em></p>';
+                } else {
+                    echo '<p>' . esc_html__( 'No parser debug log found.', 'ai-content-studio' ) . '</p>';
+                }
+                ?>
             </div>
         </div>
 
@@ -593,31 +621,63 @@ class ACS_Admin {
     public function ajax_generate_content() {
         // Verify nonce
         if ( ! wp_verify_nonce( $_POST['nonce'], 'acs_ajax_nonce' ) ) {
-            wp_die( __( 'Security check failed.', 'ai-content-studio' ) );
+            $this->send_error_response( 'security_error', array( 'message' => __( 'Security check failed.', 'ai-content-studio' ) ) );
+            return;
         }
 
         // Check permissions
         if ( ! current_user_can( 'acs_generate_content' ) ) {
-            wp_die( __( 'You do not have permission to generate content.', 'ai-content-studio' ) );
+            $this->send_error_response( 'permission_denied', array( 'message' => __( 'You do not have permission to generate content.', 'ai-content-studio' ) ) );
+            return;
         }
 
         // Sanitize input
         $prompt_data = ACS_Sanitizer::sanitize_prompt_input( $_POST );
 
-        // Initialize content generator (modular)
-        if ( file_exists( ACS_PLUGIN_PATH . 'generators/class-acs-content-generator.php' ) ) {
-            require_once ACS_PLUGIN_PATH . 'generators/class-acs-content-generator.php';
-            $generator = new ACS_Content_Generator();
-            $result = $generator->generate( $prompt_data );
-        } else {
-            wp_send_json_error( __( 'Content generator not available.', 'ai-content-studio' ) );
+        // Initialize content generator using Generator Loader
+        if ( ! class_exists( 'ACS_Generator_Loader' ) ) {
+            require_once ACS_PLUGIN_PATH . 'includes/class-acs-generator-loader.php';
+        }
+        
+        $generator = ACS_Generator_Loader::get_instance();
+        
+        if ( is_wp_error( $generator ) ) {
+            error_log( '[ACS][GENERATOR] Failed to load generator: ' . $generator->get_error_message() );
+            $this->send_error_response( 'generation_failed', array( 
+                'message' => __( 'Content generator not available.', 'ai-content-studio' ),
+                'wp_error' => $generator 
+            ) );
             return;
         }
+        
+        $result = $generator->generate( $prompt_data );
 
         if ( is_wp_error( $result ) ) {
-            wp_send_json_error( $result->get_error_message() );
+            $error_code = $result->get_error_code();
+            $this->send_error_response( $error_code, array( 
+                'message' => $result->get_error_message(),
+                'wp_error' => $result 
+            ) );
         } else {
             wp_send_json_success( $result );
+        }
+    }
+    
+    /**
+     * Send error response using error handler if available.
+     *
+     * @param string $code    Error code.
+     * @param array  $context Error context.
+     */
+    private function send_error_response( $code, $context = array() ) {
+        if ( class_exists( 'ACS_Error_Handler' ) ) {
+            $error_handler = ACS_Error_Handler::get_instance();
+            $error = $error_handler->create_error( $code, $context );
+            $response = $error_handler->get_ajax_error_response( $error );
+            wp_send_json_error( $response );
+        } else {
+            $message = isset( $context['message'] ) ? $context['message'] : __( 'An error occurred.', 'ai-content-studio' );
+            wp_send_json_error( $message );
         }
     }
 
@@ -718,14 +778,19 @@ class ACS_Admin {
             'focus_keyword' => $focus_keyword,
         );
 
-        // Use content generator's create_post helper when available
-        if ( file_exists( ACS_PLUGIN_PATH . 'generators/class-acs-content-generator.php' ) ) {
-            require_once ACS_PLUGIN_PATH . 'generators/class-acs-content-generator.php';
-            $generator = new ACS_Content_Generator();
-            $post_id = $generator->create_post( $generated, $tags );
-        } else {
-            // Fallback to local creation method if generator not present
+        // Use content generator's create_post helper via Generator Loader
+        if ( ! class_exists( 'ACS_Generator_Loader' ) ) {
+            require_once ACS_PLUGIN_PATH . 'includes/class-acs-generator-loader.php';
+        }
+        
+        $generator = ACS_Generator_Loader::get_instance();
+        
+        if ( is_wp_error( $generator ) ) {
+            error_log( '[ACS][GENERATOR] Failed to load generator: ' . $generator->get_error_message() );
+            // Fallback to local creation method if generator not available
             $post_id = $this->create_wordpress_post( $generated, $tags );
+        } else {
+            $post_id = $generator->create_post( $generated, $tags );
         }
 
         if ( $post_id ) {
@@ -924,40 +989,29 @@ class ACS_Admin {
             $primary_keyword = $keyword_array[0]; // Use first keyword as primary
         }
         
-        $prompt = "Write a complete, SEO-optimized blog post about: {$topic}\n\n";
-        $prompt .= "Requirements:\n";
-        $prompt .= "- Target length: approximately {$target_words} words\n";
-        $prompt .= "- Include a compelling, SEO-optimized title\n";
-        $prompt .= "- Write an engaging introduction that includes the main keyword\n";
-        $prompt .= "- Use HTML headings (h2, h3) instead of markdown\n";
-        $prompt .= "- Include the main keyword naturally throughout (1-2% density)\n";
-        $prompt .= "- Add internal linking opportunities (mention related topics)\n";
-        $prompt .= "- Include a strong conclusion with a call to action\n";
-        $prompt .= "- Write in a professional, engaging tone\n";
-        $prompt .= "- Structure content for easy scanning (short paragraphs, bullet points)\n";
-        
-        if ( ! empty( $keywords ) ) {
-            $prompt .= "- Primary keyword (use prominently): {$primary_keyword}\n";
-            $prompt .= "- Secondary keywords to include naturally: {$keywords}\n";
+        // Use Generator Loader to get generator instance
+        if ( ! class_exists( 'ACS_Generator_Loader' ) ) {
+            require_once ACS_PLUGIN_PATH . 'includes/class-acs-generator-loader.php';
         }
         
-        $prompt .= "\nContent Structure Requirements:\n";
-        $prompt .= "- Use <h2> and <h3> tags for headings (NOT ## or ###)\n";
-        $prompt .= "- Include the primary keyword in the first paragraph\n";
-        $prompt .= "- Add relevant subheadings that could contain keywords\n";
-        $prompt .= "- Include mentions of outbound link opportunities\n";
-        $prompt .= "- Write in HTML format ready for WordPress\n";
+        $generator = ACS_Generator_Loader::get_instance();
         
-        $prompt .= "\nPlease structure the response as:\n";
-        $prompt .= "TITLE: [SEO-optimized blog post title with primary keyword]\n";
-        $prompt .= "CONTENT: [Full blog post content in HTML format with proper h2/h3 headings]\n";
-        $prompt .= "META_DESCRIPTION: [SEO meta description with primary keyword, max 155 characters]\n";
-        $prompt .= "FOCUS_KEYWORD: [Primary focus keyword for SEO]\n";
+        // Handle WP_Error from loader
+        if ( is_wp_error( $generator ) ) {
+            error_log( '[ACS][GENERATOR] Failed to load generator: ' . $generator->get_error_message() );
+            return false;
+        }
+
+        // Gather internal link candidates (so the model can suggest real internal links)
+        $internal_candidates = $this->get_internal_link_candidates( $topic, $keywords, 5 );
+
+        // Build prompt including internal candidates
+        $prompt = $generator->build_prompt( $topic, $keywords, $word_count, $internal_candidates );
 
         // Log prompt for debugging (wp-content directory for universal access)
         $debug_log_path = WP_CONTENT_DIR . '/acs_prompt_debug.log';
         $debug_entry = date('Y-m-d H:i:s') . "\nPROMPT:\n" . $prompt . "\n---\n";
-        file_put_contents($debug_log_path, $debug_entry, FILE_APPEND | LOCK_EX);
+        file_put_contents( $debug_log_path, $debug_entry, FILE_APPEND | LOCK_EX );
         
         $url = 'https://api.groq.com/openai/v1/chat/completions';
         $headers = array(
@@ -984,22 +1038,36 @@ class ACS_Admin {
         ) );
         
         if ( is_wp_error( $response ) ) {
+            error_log( '[ACS][API] API request failed: ' . $response->get_error_message() );
             return false;
         }
         
         $response_code = wp_remote_retrieve_response_code( $response );
         if ( $response_code !== 200 ) {
+            error_log( '[ACS][API] API returned non-200 status: ' . $response_code );
             return false;
         }
         
         $body = wp_remote_retrieve_body( $response );
+        // Write raw provider output to global debug log in wp-content for visibility
+        $global_dbg = WP_CONTENT_DIR . '/acs_content_debug.log';
+        $global_entry = "[" . date('Y-m-d H:i:s') . "] ORIGINAL OUTPUT (groq):\n" . $body . "\nPROMPT:\n" . $prompt . "\n---\n";
+        @file_put_contents( $global_dbg, $global_entry, FILE_APPEND | LOCK_EX );
         $data = json_decode( $body, true );
         
         if ( isset( $data['choices'][0]['message']['content'] ) ) {
             $content = $data['choices'][0]['message']['content'];
-            return $this->parse_generated_content( $content );
+            $parsed = $this->parse_generated_content( $content );
+            
+            // Handle WP_Error from parser
+            if ( is_wp_error( $parsed ) ) {
+                return false;
+            }
+            
+            return $parsed;
         }
         
+        error_log( '[ACS][API] No content in API response' );
         return false;
     }
 
@@ -1007,47 +1075,27 @@ class ACS_Admin {
      * Parse the generated content into title, content, meta description, and focus keyword.
      *
      * @param string $content The raw generated content
-     * @return array Parsed content array
+     * @return array|WP_Error Parsed content array or error
      */
     private function parse_generated_content( $content ) {
-        $result = array(
-            'title' => '',
-            'content' => '',
-            'meta_description' => '',
-            'focus_keyword' => ''
-        );
-        
-        // Extract title
-        if ( preg_match('/TITLE:\s*(.+?)(?=\n|$)/i', $content, $matches) ) {
-            $result['title'] = trim( $matches[1] );
+        // Delegate to Response Parser component
+        if ( ! class_exists( 'ACS_Response_Parser' ) ) {
+            require_once ACS_PLUGIN_PATH . 'includes/class-acs-response-parser.php';
         }
         
-        // Extract meta description
-        if ( preg_match('/META_DESCRIPTION:\s*(.+?)(?=\n|$)/i', $content, $matches) ) {
-            $result['meta_description'] = trim( $matches[1] );
-        }
+        $parser = new ACS_Response_Parser();
+        $result = $parser->parse( $content );
         
-        // Extract focus keyword
-        if ( preg_match('/FOCUS_KEYWORD:\s*(.+?)(?=\n|$)/i', $content, $matches) ) {
-            $result['focus_keyword'] = trim( $matches[1] );
-        }
-        
-        // Extract content
-        if ( preg_match('/CONTENT:\s*(.+?)(?=\n\s*(?:META_DESCRIPTION|FOCUS_KEYWORD):|$)/is', $content, $matches) ) {
-            $result['content'] = trim( $matches[1] );
+        // Handle WP_Error returns
+        if ( is_wp_error( $result ) ) {
+            error_log( '[ACS][PARSE] Parse error: ' . $result->get_error_message() );
+            error_log( '[ACS][PARSE] Raw response: ' . $content );
+            return $result;
         }
         
         // Convert markdown headings to HTML if present
-        $result['content'] = $this->convert_markdown_to_html( $result['content'] );
-        
-        // Fallbacks if parsing fails
-        if ( empty( $result['title'] ) ) {
-            $lines = explode( "\n", $content );
-            $result['title'] = trim( $lines[0] );
-        }
-        
-        if ( empty( $result['content'] ) ) {
-            $result['content'] = $this->convert_markdown_to_html( $content );
+        if ( ! empty( $result['content'] ) ) {
+            $result['content'] = $this->convert_markdown_to_html( $result['content'] );
         }
         
         return $result;
@@ -1061,12 +1109,26 @@ class ACS_Admin {
      * @return int|false Post ID or false on failure
      */
     private function create_wordpress_post( $content, $keywords = '' ) {
-        $title = $content['title'] ?: 'AI Generated Post - ' . current_time( 'Y-m-d H:i:s' );
-        $post_content = $content['content'] ?: 'No content generated.';
+        // Content should already be parsed by Response Parser - no inline JSON parsing needed
         
+        // Validate and clean title before post creation
+        $title = isset($content['title']) && is_string($content['title']) ? $content['title'] : '';
+        
+        // Clean title of JSON syntax characters and HTML tags
+        $title = strip_tags($title);
+        $title = str_replace(['{', '}', '[', ']', '"'], '', $title);
+        $title = trim($title);
+        
+        // Ensure title is not empty after cleaning
+        if (empty($title)) {
+            $title = 'AI Generated Post - ' . current_time('Y-m-d H:i:s');
+        }
+        
+        $post_content = isset($content['content']) && is_string($content['content']) ? $content['content'] : 'No content generated.';
+
         // Create SEO-friendly slug
-        $slug = sanitize_title( $title );
-        
+        $slug = sanitize_title($title);
+
         $post_data = array(
             'post_title' => $title,
             'post_content' => $post_content,
@@ -1076,42 +1138,30 @@ class ACS_Admin {
             'post_type' => 'post',
             'meta_input' => array(
                 '_acs_generated' => true,
-                '_acs_generated_date' => current_time( 'mysql' ),
+                '_acs_generated_date' => current_time('mysql'),
                 '_acs_original_keywords' => $keywords,
+                '_acs_generated_content' => $content, // Store full generated content for optimizer
             )
         );
-        
-        $post_id = wp_insert_post( $post_data );
-        
-        if ( $post_id && ! is_wp_error( $post_id ) ) {
-            // Set Yoast SEO meta fields
-            if ( ! empty( $content['meta_description'] ) ) {
-                update_post_meta( $post_id, '_yoast_wpseo_metadesc', $content['meta_description'] );
+
+        $post_id = wp_insert_post($post_data);
+
+        if ($post_id && !is_wp_error($post_id)) {
+            // Use Metadata Mapper to handle SEO meta fields
+            if (!class_exists('ACS_Metadata_Mapper')) {
+                require_once ACS_PLUGIN_PATH . 'includes/class-acs-metadata-mapper.php';
             }
             
-            // Set focus keyword for Yoast
-            $focus_keyword = $content['focus_keyword'];
-            if ( empty( $focus_keyword ) && ! empty( $keywords ) ) {
-                $keyword_array = array_map( 'trim', explode( ',', $keywords ) );
-                $focus_keyword = $keyword_array[0]; // Use first keyword as focus
-            }
+            $mapper = new ACS_Metadata_Mapper();
+            $mapping_success = $mapper->map_to_post_meta($post_id, $content);
             
-            if ( ! empty( $focus_keyword ) ) {
-                update_post_meta( $post_id, '_yoast_wpseo_focuskw', $focus_keyword );
+            if (!$mapping_success) {
+                error_log('[ACS][META] Failed to map metadata for post ID: ' . $post_id);
             }
-            
-            // Set custom SEO title if needed
-            if ( ! empty( $focus_keyword ) ) {
-                $seo_title = $title;
-                if ( stripos( $title, $focus_keyword ) === false ) {
-                    $seo_title = $focus_keyword . ' - ' . $title;
-                }
-                update_post_meta( $post_id, '_yoast_wpseo_title', $seo_title );
-            }
-            
+
             return $post_id;
         }
-        
+
         return false;
     }
 
@@ -1224,5 +1274,53 @@ class ACS_Admin {
         }
 
         return trim( $html_content );
+    }
+
+    /**
+     * Get internal link candidates (posts/pages) relevant to topic/keywords.
+     */
+    private function get_internal_link_candidates( $topic, $keywords, $max = 5 ) {
+        $candidates = array();
+        $args = array(
+            'post_type' => array( 'post', 'page' ),
+            'post_status' => 'publish',
+            'posts_per_page' => $max,
+            'orderby' => 'date',
+            'order' => 'DESC',
+            's' => $topic,
+        );
+        $query = new WP_Query( $args );
+        if ( $query->have_posts() ) {
+            foreach ( $query->posts as $p ) {
+                $candidates[] = array(
+                    'title' => get_the_title( $p->ID ),
+                    'url' => get_permalink( $p->ID ),
+                    'excerpt' => wp_trim_words( $p->post_content, 20 ),
+                );
+            }
+        }
+        // If not enough, add by keywords
+        if ( count( $candidates ) < $max && ! empty( $keywords ) ) {
+            $kw_array = array_map( 'trim', explode( ',', $keywords ) );
+            foreach ( $kw_array as $kw ) {
+                $args['s'] = $kw;
+                $query = new WP_Query( $args );
+                foreach ( $query->posts as $p ) {
+                    $found = false;
+                    foreach ( $candidates as $c ) {
+                        if ( $c['url'] === get_permalink( $p->ID ) ) { $found = true; break; }
+                    }
+                    if ( ! $found ) {
+                        $candidates[] = array(
+                            'title' => get_the_title( $p->ID ),
+                            'url' => get_permalink( $p->ID ),
+                            'excerpt' => wp_trim_words( $p->post_content, 20 ),
+                        );
+                        if ( count( $candidates ) >= $max ) break 2;
+                    }
+                }
+            }
+        }
+        return $candidates;
     }
 }

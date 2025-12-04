@@ -488,23 +488,32 @@
  */
 
 function createPost(data) {
+    // If data is a JSON string, parse it
+    if (typeof data === 'string') {
+        try {
+            data = JSON.parse(data);
+        } catch (e) {
+            alert('Error: Could not parse generated content JSON.');
+            return;
+        }
+    }
     // Create a new post with the generated content
     var form = document.createElement('form');
     form.method = 'post';
     form.action = acs_ajax.ajax_url;
-    
+
     // Add form fields
     var fields = {
         'action': 'acs_create_post',
         'nonce': acs_ajax.nonce,
-        'title': data.title,
-        'content': data.content,
-        'meta_description': data.meta_description,
-        'slug': data.slug,
-        'focus_keyword': data.focus_keyword,
-        'tags': data.tags.join(',')
+        'title': data.title || '',
+        'content': data.content || '',
+        'meta_description': data.meta_description || '',
+        'slug': data.slug || '',
+        'focus_keyword': data.focus_keyword || '',
+        'tags': Array.isArray(data.tags) ? data.tags.join(',') : (data.tags || '')
     };
-    
+
     for (var field in fields) {
         var input = document.createElement('input');
         input.type = 'hidden';
@@ -512,7 +521,7 @@ function createPost(data) {
         input.value = fields[field];
         form.appendChild(input);
     }
-    
+
     document.body.appendChild(form);
     form.submit();
 }

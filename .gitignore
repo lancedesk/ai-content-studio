@@ -1,8 +1,15 @@
-# Ignore tests folder and all its contents
-tests/
+# Local secrets (do NOT commit)
+secrets.php
 
+# Local debug/log files
+acs_content_debug.log
+acs_prompt_debug.log
 # Ignore planning folder and all its contents
 planning/
+
+# Ignore test results and cache files but keep test source code
+tests/.phpunit.result.cache
+tests/coverage/
 
 # Local config / secrets
 wp-config.php
@@ -11,3 +18,15 @@ wp-content/uploads/
 node_modules/
 .vscode/
 .DS_Store
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+vendor/
+composer.lock
+composer.json
+package-lock.json
+package.json
+yarn.lock
+yarn-error.log

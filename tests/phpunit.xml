@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit bootstrap="bootstrap.php" colors="true">
+    <testsuites>
+        <testsuite name="ACS Tests">
+            <file>TestContentGenerator.php</file>
+            <file>TestSEOValidationProperties.php</file>
+            <file>TestSEOIntegrationWorkflow.php</file>
+            <file>TestSEOValidationComponents.php</file>
+            <file>test_property_wordpress_integration_compliance.php</file>
+        </testsuite>
+    </testsuites>
+</phpunit>

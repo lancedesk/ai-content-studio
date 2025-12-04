@@ -58,7 +58,7 @@ class ACS_Groq extends ACS_AI_Provider_Base {
     public function generate_content( $prompt, $options = array() ) {
         $defaults = array(
             'model' => 'llama-3.3-70b-versatile',
-            'max_tokens' => 2048,
+            'max_tokens' => 4096, // Increased from 2048 to allow longer content
             'temperature' => 0.7,
             'top_p' => 1,
             'frequency_penalty' => 0,
@@ -234,7 +234,7 @@ class ACS_Groq extends ACS_AI_Provider_Base {
             $prompt .= "Write clearly and humanly. ";
         }
 
-        $prompt .= "STRICT REQUIREMENTS: Output a single valid JSON object with the fields: title, meta_description, slug, content, excerpt, focus_keyword, secondary_keywords (array), tags (array), image_prompts (array of {prompt, alt}), internal_links (array of {anchor_text, target}).\n";
+        $prompt .= "STRICT REQUIREMENTS: Output a single valid, compact JSON object (no pretty-printing, no newlines in string values) with the fields: title, meta_description, slug, content, excerpt, focus_keyword, secondary_keywords (array), tags (array), image_prompts (array of {prompt, alt}), internal_links (array of {anchor_text, target}).\n";
         $prompt .= "Readability: average sentence length <=20 words; no more than 15% sentences >25 words; use transition words in >=30% of sentences; avoid passive voice.\n";
         $prompt .= "SEO: focus_keyword must appear at the start of the title, in the first paragraph, and be distributed across the content (1-2% density). Provide at least 1 image prompt with alt text including the focus keyword; provide at least 2 suggested internal links. Do NOT wrap keywords in <b> or <strong> tags.\n";
         $prompt .= "HTML rules: Use semantic HTML (<h2>/<h3>, <p>, <ul>/<ol>). Return only JSON.\n";
@@ -251,11 +251,52 @@ class ACS_Groq extends ACS_AI_Provider_Base {
      * @return   array                  Parsed content array.
      */
     private function parse_generated_content( $content, $response ) {
+        // Log raw response for debugging
+        error_log( '[ACS][JSON_PARSE] Raw response length: ' . strlen( $content ) );
+        error_log( '[ACS][JSON_PARSE] Raw response start: ' . substr( $content, 0, 100 ) );
+        
+        // Handle markdown code blocks - extract JSON from ```json ... ``` or ``` ... ``` blocks
+        // Also handle cases where closing ``` might be missing
+        if ( preg_match('/```json\s*\n?(.*?)(?:\n?```|$)/s', $content, $matches) ) {
+            $content = trim( $matches[1] );
+            error_log( '[ACS][JSON_PARSE] Extracted from ```json markdown' );
+            // Fix pretty-printed JSON with newlines in string values
+            $content = $this->fix_pretty_printed_json( $content );
+            error_log( '[ACS][JSON_PARSE] Fixed pretty-printed JSON' );
+        } else if ( preg_match('/```\s*\n?(.*?)(?:\n?```|$)/s', $content, $matches) ) {
+            // Try generic code block extraction (handles both closed and unclosed blocks)
+            $content = trim( $matches[1] );
+            error_log( '[ACS][JSON_PARSE] Extracted from ``` code block' );
+            // Fix pretty-printed JSON with newlines in string values
+            $content = $this->fix_pretty_printed_json( $content );
+            error_log( '[ACS][JSON_PARSE] Fixed pretty-printed JSON' );
+        }
+        
         // Try to parse JSON response
         $parsed = json_decode( $content, true );
+        $json_error = json_last_error();
+        
+        // Check for truncated JSON
+        if ( $json_error !== JSON_ERROR_NONE ) {
+            error_log( '[ACS][JSON_PARSE] JSON decode error: ' . json_last_error_msg() );
+            error_log( '[ACS][JSON_PARSE] Response structure validation failed. Raw response: ' . substr( $content, 0, 500 ) );
+            
+            // Attempt to fix truncated JSON by adding closing braces
+            if ( $json_error === JSON_ERROR_SYNTAX || strpos( json_last_error_msg(), 'unexpected end' ) !== false ) {
+                error_log( '[ACS][JSON_PARSE] Attempting to fix truncated JSON...' );
+                $fixed_content = $this->attempt_json_fix( $content );
+                if ( $fixed_content !== $content ) {
+                    $parsed = json_decode( $fixed_content, true );
+                    if ( json_last_error() === JSON_ERROR_NONE && is_array( $parsed ) ) {
+                        error_log( '[ACS][JSON_PARSE] Successfully fixed truncated JSON' );
+                    }
+                }
+            }
+        }
         
         if ( json_last_error() === JSON_ERROR_NONE && is_array( $parsed ) ) {
             // Valid JSON response
+            error_log( '[ACS][JSON_PARSE] Successfully parsed JSON with keys: ' . implode( ', ', array_keys( $parsed ) ) );
             $result = array(
                 'title' => isset( $parsed['title'] ) ? $parsed['title'] : '',
                 'content' => isset( $parsed['content'] ) ? $parsed['content'] : '',
@@ -265,11 +306,27 @@ class ACS_Groq extends ACS_AI_Provider_Base {
                 'focus_keyword' => isset( $parsed['focus_keyword'] ) ? $parsed['focus_keyword'] : '',
                 'secondary_keywords' => isset( $parsed['secondary_keywords'] ) ? $parsed['secondary_keywords'] : array(),
                 'tags' => isset( $parsed['tags'] ) ? $parsed['tags'] : array(),
-                'image_prompt' => isset( $parsed['image_prompt'] ) ? $parsed['image_prompt'] : '',
+                'image_prompts' => isset( $parsed['image_prompts'] ) ? $parsed['image_prompts'] : ( isset( $parsed['image_prompt'] ) ? array( $parsed['image_prompt'] ) : array() ),
+                'internal_links' => isset( $parsed['internal_links'] ) ? $parsed['internal_links'] : array(),
+                'outbound_links' => isset( $parsed['outbound_links'] ) ? $parsed['outbound_links'] : array(),
                 'usage' => isset( $response['usage'] ) ? $response['usage'] : array(),
                 'model' => isset( $response['model'] ) ? $response['model'] : '',
                 'provider' => 'groq',
             );
+            
+            // Validate required fields
+            $required_fields = array( 'title', 'content', 'meta_description' );
+            $missing_fields = array();
+            foreach ( $required_fields as $field ) {
+                if ( empty( $result[$field] ) ) {
+                    $missing_fields[] = $field;
+                }
+            }
+            
+            if ( ! empty( $missing_fields ) ) {
+                error_log( '[ACS][PARSE] Response missing required fields: ' . implode( ', ', $missing_fields ) );
+            }
+            
         } else {
             // Fallback for plain text response
             $result = array(
@@ -288,6 +345,122 @@ class ACS_Groq extends ACS_AI_Provider_Base {
             );
         }
 
+        return $result;
+    }
+
+    /**
+     * Attempt to fix truncated JSON by adding missing closing braces.
+     *
+     * @since    1.0.0
+     * @param    string    $content    The potentially truncated JSON.
+     * @return   string                The fixed JSON or original if unfixable.
+     */
+    private function attempt_json_fix( $content ) {
+        // First, clean up control characters that might cause JSON parsing issues
+        // Remove problematic control characters but preserve valid JSON whitespace (tab, newline, carriage return)
+        $content = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F]/', '', $content);
+        
+        // Try decoding after control character cleanup
+        $test_decode = json_decode( $content, true );
+        if ( json_last_error() === JSON_ERROR_NONE ) {
+            return $content;
+        }
+        
+        // Count opening and closing braces/brackets
+        $open_braces = substr_count( $content, '{' );
+        $close_braces = substr_count( $content, '}' );
+        $open_brackets = substr_count( $content, '[' );
+        $close_brackets = substr_count( $content, ']' );
+        
+        // Check if we're inside a string value
+        $in_string = false;
+        $last_char = '';
+        for ( $i = strlen( $content ) - 1; $i >= 0; $i-- ) {
+            $char = $content[$i];
+            if ( $char === '"' && $last_char !== '\\' ) {
+                $in_string = true;
+                break;
+            }
+            if ( ! ctype_space( $char ) ) {
+                $last_char = $char;
+            }
+        }
+        
+        // If truncated inside a string, close it
+        if ( $in_string ) {
+            $content .= '"';
+        }
+        
+        // Close any open arrays
+        while ( $open_brackets > $close_brackets ) {
+            $content .= ']';
+            $close_brackets++;
+        }
+        
+        // Close any open objects
+        while ( $open_braces > $close_braces ) {
+            $content .= '}';
+            $close_braces++;
+        }
+        
+        return $content;
+    }
+
+    /**
+     * Fix pretty-printed JSON with newlines in string values.
+     * 
+     * @since    1.0.0
+     * @param    string    $json    JSON string that may have unescaped newlines.
+     * @return   string             Fixed JSON string.
+     */
+    private function fix_pretty_printed_json( $json ) {
+        // Strategy: Parse character by character, tracking if we're inside a string
+        // If inside a string, escape any unescaped newlines and tabs
+        $result = '';
+        $in_string = false;
+        $escape_next = false;
+        $len = strlen( $json );
+        
+        for ( $i = 0; $i < $len; $i++ ) {
+            $char = $json[$i];
+            
+            if ( $escape_next ) {
+                $result .= $char;
+                $escape_next = false;
+                continue;
+            }
+            
+            if ( $char === '\\' ) {
+                $result .= $char;
+                $escape_next = true;
+                continue;
+            }
+            
+            if ( $char === '"' ) {
+                $in_string = ! $in_string;
+                $result .= $char;
+                continue;
+            }
+            
+            // If we're inside a string and encounter a newline or tab, escape it
+            if ( $in_string ) {
+                if ( $char === "\n" ) {
+                    $result .= '\\n';
+                    continue;
+                }
+                if ( $char === "\r" ) {
+                    $result .= '\\r';
+                    continue;
+                }
+                if ( $char === "\t" ) {
+                    $result .= '\\t';
+                    continue;
+                }
+            }
+            
+            $result .= $char;
+        }
+        
         return $result;
     }
 

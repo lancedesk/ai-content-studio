@@ -120,6 +120,21 @@ class ACS_Core {
         }
         
         /**
+         * Error handling system
+         */
+        if (file_exists(ACS_PLUGIN_PATH . 'includes/class-acs-error-handler.php')) {
+            require_once ACS_PLUGIN_PATH . 'includes/class-acs-error-handler.php';
+        }
+        
+        /**
+         * Performance optimization
+         */
+        if (file_exists(ACS_PLUGIN_PATH . 'includes/class-acs-performance.php')) {
+            require_once ACS_PLUGIN_PATH . 'includes/class-acs-performance.php';
+            ACS_Performance::get_instance();
+        }
+        
+        /**
          * AI Provider system
          */
         if (file_exists(ACS_PLUGIN_PATH . 'api/class-acs-ai-provider.php')) {
@@ -138,9 +153,15 @@ class ACS_Core {
         }
         
         /**
-         * Simple admin class for basic functionality
+         * Load the unified admin controller (modern UI)
          */
-        // Load the full admin controller if present (menu registration and admin pages)
+        if ( file_exists( ACS_PLUGIN_PATH . 'admin/class-acs-unified-admin.php' ) ) {
+            require_once ACS_PLUGIN_PATH . 'admin/class-acs-unified-admin.php';
+        }
+        
+        /**
+         * Load the legacy admin class for backwards compatibility (AJAX handlers)
+         */
         if ( file_exists( ACS_PLUGIN_PATH . 'admin/class-acs-admin.php' ) ) {
             require_once ACS_PLUGIN_PATH . 'admin/class-acs-admin.php';
         }
@@ -177,14 +198,20 @@ class ACS_Core {
     private function define_admin_hooks() {
         if (!$this->loader) return;
         
-        // Only register admin hooks if admin classes exist
+        // Use the UNIFIED Admin for menus and page rendering (modern UI)
+        // The singleton pattern ensures hooks are only registered once
+        if (class_exists('ACS_Unified_Admin')) {
+            $unified_admin = ACS_Unified_Admin::get_instance($this->get_plugin_name(), $this->get_version());
+            // Hooks are already registered in the singleton constructor
+            // No need to add them again via the loader
+        }
+        
+        // Use legacy ACS_Admin for AJAX handlers (backwards compatibility)
         if (class_exists('ACS_Admin')) {
             $plugin_admin = new ACS_Admin( $this->get_plugin_name(), $this->get_version() );
-            $this->loader->add_action( 'admin_menu', $plugin_admin, 'add_admin_menu' );
-
-            // Enqueue admin assets (styles + scripts)
-            $this->loader->add_action( 'admin_enqueue_scripts', $plugin_admin, 'enqueue_styles' );
-            $this->loader->add_action( 'admin_enqueue_scripts', $plugin_admin, 'enqueue_scripts' );
+            
+            // Don't register menu from old admin - unified admin handles that
+            // $this->loader->add_action( 'admin_menu', $plugin_admin, 'add_admin_menu' );
 
             // Initialize admin settings and other admin init hooks
             $this->loader->add_action( 'admin_init', $plugin_admin, 'admin_init' );
@@ -200,7 +227,7 @@ class ACS_Core {
             if ( function_exists( 'get_role' ) ) {
                 $admin_role = get_role( 'administrator' );
                 if ( $admin_role ) {
-                    $caps = array( 'acs_generate_content', 'acs_manage_settings', 'acs_view_analytics' );
+                    $caps = array( 'acs_generate_content', 'acs_manage_settings', 'acs_view_analytics', 'acs_manage_seo' );
                     foreach ( $caps as $cap ) {
                         if ( ! $admin_role->has_cap( $cap ) ) {
                             $admin_role->add_cap( $cap );

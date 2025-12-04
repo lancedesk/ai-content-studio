@@ -151,7 +151,7 @@ abstract class ACS_AI_Provider_Base implements ACS_AI_Provider_Interface {
         $args = array(
             'method' => $method,
             'headers' => $headers,
-            'timeout' => 60,
+            'timeout' => 120, // Increased timeout for longer content generation
         );
 
         if ( $method === 'POST' && ! empty( $data ) ) {
@@ -250,6 +250,23 @@ abstract class ACS_AI_Provider_Base implements ACS_AI_Provider_Interface {
             ),
             array( '%s', '%s', '%d', '%d', '%f', '%d', '%s', '%s' )
         );
+
+        // Also append a human-readable entry to the global debug log in wp-content for out-of-WP debugging
+        try {
+            $debug_path = dirname( dirname( dirname( dirname( __FILE__ ) ) ) ) . DIRECTORY_SEPARATOR . 'acs_content_debug.log';
+            $entry  = "[" . date('Y-m-d H:i:s') . "] PROVIDER_API_CALL (" . $this->provider_name . "):\n";
+            $entry .= "ENDPOINT: " . $endpoint . "\n";
+            $entry .= "REQUEST: " . ( is_string( $request ) ? $request : print_r( $request, true ) ) . "\n";
+            if ( is_wp_error( $response ) ) {
+                $entry .= "RESPONSE_ERROR: " . $response->get_error_message() . "\n";
+            } else {
+                $entry .= "RESPONSE: " . print_r( $response, true ) . "\n";
+            }
+            $entry .= "---\n";
+            @file_put_contents( $debug_path, $entry, FILE_APPEND | LOCK_EX );
+        } catch ( Exception $e ) {
+            // Non-fatal: avoid breaking provider flow if file write fails
+        }
     }
 
     /**

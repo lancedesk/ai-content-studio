@@ -31,6 +31,12 @@ class ACS_Settings {
         add_action( 'wp_ajax_acs_save_settings', array( $this, 'ajax_save_settings' ) );
         add_action( 'wp_ajax_acs_test_api_connection', array( $this, 'ajax_test_api_connection' ) );
         add_action( 'wp_ajax_acs_get_keyword_suggestions', array( $this, 'ajax_get_keyword_suggestions' ) );
+        add_action( 'wp_ajax_acs_export_settings', array( $this, 'ajax_export_settings' ) );
+        add_action( 'wp_ajax_acs_import_settings', array( $this, 'ajax_import_settings' ) );
+        add_action( 'wp_ajax_acs_reset_settings', array( $this, 'ajax_reset_settings' ) );
+        add_action( 'wp_ajax_acs_log_client_error', array( $this, 'ajax_log_client_error' ) );
+        add_action( 'wp_ajax_acs_get_dashboard_metrics', array( $this, 'ajax_get_dashboard_metrics' ) );
+        add_action( 'wp_ajax_acs_clear_cache', array( $this, 'ajax_clear_cache' ) );
         // Show admin notice if essential provider keys are not configured
         add_action( 'admin_notices', array( $this, 'missing_api_key_notice' ) );
     }
@@ -207,6 +213,198 @@ class ACS_Settings {
         }
 
         wp_send_json_error( __( 'Keyword research unavailable.', 'ai-content-studio' ) );
+    }
+
+    /**
+     * AJAX handler for exporting settings
+     */
+    public function ajax_export_settings() {
+        if ( empty( $_POST['nonce'] ) || ! wp_verify_nonce( $_POST['nonce'], 'acs_ajax_nonce' ) ) {
+            wp_send_json_error( __( 'Security check failed.', 'ai-content-studio' ) );
+        }
+
+        if ( ! current_user_can( 'acs_manage_settings' ) && ! current_user_can( 'manage_options' ) ) {
+            wp_send_json_error( __( 'You do not have permission to export settings.', 'ai-content-studio' ) );
+        }
+
+        $settings = get_option( 'acs_settings', array() );
+        
+        // Remove sensitive API keys from export (optional - can be toggled)
+        $export_data = array(
+            'version'     => defined( 'ACS_VERSION' ) ? ACS_VERSION : '1.0.0',
+            'exported_at' => gmdate( 'Y-m-d H:i:s' ),
+            'settings'    => $settings,
+        );
+
+        wp_send_json_success( $export_data );
+    }
+
+    /**
+     * AJAX handler for importing settings
+     */
+    public function ajax_import_settings() {
+        if ( empty( $_POST['nonce'] ) || ! wp_verify_nonce( $_POST['nonce'], 'acs_ajax_nonce' ) ) {
+            wp_send_json_error( __( 'Security check failed.', 'ai-content-studio' ) );
+        }
+
+        if ( ! current_user_can( 'acs_manage_settings' ) && ! current_user_can( 'manage_options' ) ) {
+            wp_send_json_error( __( 'You do not have permission to import settings.', 'ai-content-studio' ) );
+        }
+
+        $import_json = isset( $_POST['settings'] ) ? wp_unslash( $_POST['settings'] ) : '';
+        
+        if ( empty( $import_json ) ) {
+            wp_send_json_error( __( 'No settings data provided.', 'ai-content-studio' ) );
+        }
+
+        $import_data = json_decode( $import_json, true );
+        
+        if ( json_last_error() !== JSON_ERROR_NONE ) {
+            wp_send_json_error( __( 'Invalid JSON format.', 'ai-content-studio' ) );
+        }
+
+        // Extract settings from import data (support both formats)
+        $settings = isset( $import_data['settings'] ) ? $import_data['settings'] : $import_data;
+        
+        if ( ! is_array( $settings ) ) {
+            wp_send_json_error( __( 'Invalid settings format.', 'ai-content-studio' ) );
+        }
+
+        // Sanitize imported settings
+        $sanitized = $this->sanitize_settings( $settings );
+        
+        // Merge with existing to preserve any keys not in import
+        $existing = get_option( 'acs_settings', array() );
+        $merged   = is_array( $existing ) ? array_replace_recursive( $existing, $sanitized ) : $sanitized;
+        
+        update_option( 'acs_settings', $merged );
+
+        wp_send_json_success( __( 'Settings imported successfully.', 'ai-content-studio' ) );
+    }
+
+    /**
+     * AJAX handler for resetting settings
+     */
+    public function ajax_reset_settings() {
+        // Check for either nonce format
+        $nonce = isset( $_POST['nonce'] ) ? $_POST['nonce'] : '';
+        $valid_nonce = wp_verify_nonce( $nonce, 'acs_ajax_nonce' ) || wp_verify_nonce( $nonce, 'acs_nonce' );
+        
+        if ( ! $valid_nonce ) {
+            wp_send_json_error( __( 'Security check failed.', 'ai-content-studio' ) );
+        }
+
+        if ( ! current_user_can( 'acs_manage_settings' ) && ! current_user_can( 'manage_options' ) ) {
+            wp_send_json_error( __( 'You do not have permission to reset settings.', 'ai-content-studio' ) );
+        }
+
+        // Delete the settings option
+        delete_option( 'acs_settings' );
+        delete_option( 'acs_role_caps' );
+
+        wp_send_json_success( __( 'Settings reset successfully.', 'ai-content-studio' ) );
+    }
+
+    /**
+     * AJAX handler for logging client-side errors
+     */
+    public function ajax_log_client_error() {
+        // Check nonce
+        $nonce = isset( $_POST['nonce'] ) ? $_POST['nonce'] : '';
+        $valid_nonce = wp_verify_nonce( $nonce, 'acs_admin_nonce' ) || wp_verify_nonce( $nonce, 'acs_ajax_nonce' );
+        
+        if ( ! $valid_nonce ) {
+            wp_send_json_error( __( 'Security check failed.', 'ai-content-studio' ) );
+        }
+
+        // Must be a logged-in user
+        if ( ! is_user_logged_in() ) {
+            wp_send_json_error( __( 'Not authenticated.', 'ai-content-studio' ) );
+        }
+
+        $code = isset( $_POST['code'] ) ? sanitize_text_field( $_POST['code'] ) : 'client_error';
+        $message = isset( $_POST['message'] ) ? sanitize_text_field( $_POST['message'] ) : '';
+        $data = isset( $_POST['data'] ) ? sanitize_text_field( $_POST['data'] ) : '';
+        $url = isset( $_POST['url'] ) ? esc_url_raw( $_POST['url'] ) : '';
+        $user_agent = isset( $_POST['userAgent'] ) ? sanitize_text_field( $_POST['userAgent'] ) : '';
+
+        // Log using error handler if available
+        if ( class_exists( 'ACS_Error_Handler' ) ) {
+            $context = array(
+                'message'    => $message,
+                'client_url' => $url,
+                'user_agent' => $user_agent,
+                'data'       => $data,
+            );
+            ACS_Error_Handler::get_instance()->log_error( $code, $context, 'warning' );
+        }
+
+        wp_send_json_success();
+    }
+
+    /**
+     * AJAX handler for getting cached dashboard metrics.
+     */
+    public function ajax_get_dashboard_metrics() {
+        // Check nonce
+        $nonce = isset( $_POST['nonce'] ) ? $_POST['nonce'] : '';
+        $valid_nonce = wp_verify_nonce( $nonce, 'acs_admin_nonce' ) || wp_verify_nonce( $nonce, 'acs_ajax_nonce' );
+        
+        if ( ! $valid_nonce ) {
+            wp_send_json_error( __( 'Security check failed.', 'ai-content-studio' ) );
+        }
+
+        if ( ! current_user_can( 'acs_view_analytics' ) && ! current_user_can( 'manage_options' ) ) {
+            wp_send_json_error( __( 'Permission denied.', 'ai-content-studio' ) );
+        }
+
+        // Use performance class for cached metrics
+        if ( class_exists( 'ACS_Performance' ) ) {
+            $metrics = ACS_Performance::get_instance()->get_dashboard_metrics();
+            wp_send_json_success( $metrics );
+        }
+
+        // Fallback to direct query
+        if ( class_exists( 'ACS_Analytics' ) ) {
+            $metrics = array(
+                'total_generations' => ACS_Analytics::get_total_generations(),
+                'generations_today' => ACS_Analytics::get_generations_count( 'today' ),
+                'generations_week'  => ACS_Analytics::get_generations_count( 'week' ),
+            );
+            wp_send_json_success( $metrics );
+        }
+
+        wp_send_json_error( __( 'Analytics not available.', 'ai-content-studio' ) );
+    }
+
+    /**
+     * AJAX handler for clearing plugin cache.
+     */
+    public function ajax_clear_cache() {
+        // Check nonce
+        $nonce = isset( $_POST['nonce'] ) ? $_POST['nonce'] : '';
+        $valid_nonce = wp_verify_nonce( $nonce, 'acs_admin_nonce' ) || wp_verify_nonce( $nonce, 'acs_ajax_nonce' );
+        
+        if ( ! $valid_nonce ) {
+            wp_send_json_error( __( 'Security check failed.', 'ai-content-studio' ) );
+        }
+
+        if ( ! current_user_can( 'acs_manage_settings' ) && ! current_user_can( 'manage_options' ) ) {
+            wp_send_json_error( __( 'Permission denied.', 'ai-content-studio' ) );
+        }
+
+        if ( class_exists( 'ACS_Performance' ) ) {
+            $deleted = ACS_Performance::get_instance()->clear_all();
+            wp_send_json_success(
+                sprintf(
+                    /* translators: %d: number of cache entries cleared */
+                    __( 'Cache cleared successfully. %d entries removed.', 'ai-content-studio' ),
+                    $deleted
+                )
+            );
+        }
+
+        wp_send_json_error( __( 'Cache system not available.', 'ai-content-studio' ) );
     }
 
     /**

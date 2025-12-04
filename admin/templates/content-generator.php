@@ -10,7 +10,12 @@ if (!defined('ABSPATH')) {
 
 // Get current settings
 $settings = get_option('acs_settings', array());
-$providers = ACS_Core::get_instance()->get_ai_providers();
+// Available AI providers for the dropdown
+$providers = array(
+    'groq' => array('name' => 'Groq', 'models' => array('mixtral-8x7b-32768', 'llama2-70b-4096', 'gemma-7b-it')),
+    'openai' => array('name' => 'OpenAI', 'models' => array('gpt-4', 'gpt-3.5-turbo')),
+    'anthropic' => array('name' => 'Anthropic', 'models' => array('claude-3-opus', 'claude-3-sonnet', 'claude-3-haiku'))
+);
 $default_provider = isset($settings['default_provider']) ? $settings['default_provider'] : 'groq';
 // Determine whether any provider is enabled with a non-empty API key
 $providers_valid = false;

@@ -30,6 +30,14 @@ class ACS_Activator {
      */
     public static function activate() {
         
+        // Create analytics tables
+        require_once ACS_PLUGIN_PATH . 'includes/class-acs-analytics.php';
+        ACS_Analytics::install();
+        
+        // Create error handler table
+        require_once ACS_PLUGIN_PATH . 'includes/class-acs-error-handler.php';
+        ACS_Error_Handler::get_instance()->create_db_table();
+        
         // Create basic default options
         self::create_default_options();
         

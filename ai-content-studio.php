@@ -57,6 +57,11 @@ register_deactivation_hook( __FILE__, 'acs_deactivate_plugin' );
 require ACS_PLUGIN_PATH . 'includes/class-acs-core.php';
 
 /**
+ * Initialize SEO Optimizer Admin Interface
+ */
+require ACS_PLUGIN_PATH . 'admin-init.php';
+
+/**
  * Begins execution of the plugin.
  *
  * Since everything within the plugin is registered via hooks,
