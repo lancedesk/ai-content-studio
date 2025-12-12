@@ -57,11 +57,35 @@ class ACS_REST {
     }
 
     public static function permissions_check( $request ) {
-        return current_user_can( 'acs_manage_settings' );
+        // For now, only check user capability and logged-in status
+        // WordPress REST API has built-in nonce validation via X-WP-Nonce header
+        if ( ! is_user_logged_in() ) {
+            error_log( '[ACS REST] User not logged in' );
+            return false;
+        }
+        
+        // Allow either generate or manage settings capability
+        if ( ! current_user_can( 'acs_generate_content' ) && ! current_user_can( 'acs_manage_settings' ) ) {
+            error_log( '[ACS REST] User lacks acs_generate_content or acs_manage_settings capability' );
+            return false;
+        }
+        
+        return true;
     }
 
     public static function analytics_permissions_check( $request ) {
-        return current_user_can( 'acs_view_analytics' ) || current_user_can( 'acs_manage_settings' );
+        // For now, only check user capability and logged-in status
+        if ( ! is_user_logged_in() ) {
+            error_log( '[ACS REST Analytics] User not logged in' );
+            return false;
+        }
+        
+        if ( ! current_user_can( 'acs_view_analytics' ) && ! current_user_can( 'acs_manage_settings' ) ) {
+            error_log( '[ACS REST Analytics] User lacks analytics or settings capabilities' );
+            return false;
+        }
+        
+        return true;
     }
 
     public static function rest_create_post( $request ) {

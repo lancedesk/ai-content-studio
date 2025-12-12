@@ -154,7 +154,20 @@ class ACS_Content_Generator {
                 continue;
             }
 
-            $instance = new $class();
+            // Get API key from settings for this provider
+            $api_key = '';
+            $enabled = false;
+            if ( isset( $settings['providers'][ $prov ] ) && is_array( $settings['providers'][ $prov ] ) ) {
+                $api_key = isset( $settings['providers'][ $prov ]['api_key'] ) ? trim( (string) $settings['providers'][ $prov ]['api_key'] ) : '';
+                $enabled = isset( $settings['providers'][ $prov ]['enabled'] ) && ( $settings['providers'][ $prov ]['enabled'] === true || $settings['providers'][ $prov ]['enabled'] === '1' || $settings['providers'][ $prov ]['enabled'] === 1 );
+            }
+            
+            // Skip if provider is not enabled or has no API key
+            if ( ! $enabled || empty( $api_key ) ) {
+                continue;
+            }
+
+            $instance = new $class( $api_key );
             $options = array();
 
             $raw = $instance->generate_content( $prompt, $options );
@@ -182,31 +195,39 @@ class ACS_Content_Generator {
             // Apply comprehensive SEO validation pipeline
             $seoValidationResult = $this->validateWithPipeline( $result, $keywords );
             
-            if ( $seoValidationResult->isValid ) {
-                // Use corrected content from pipeline
+            // Always use corrected content if available (even if validation isn't perfect)
+            // This ensures auto-corrections are always applied and returned to the user
+            if ( ! empty( $seoValidationResult->correctedContent ) ) {
                 $result = $seoValidationResult->correctedContent;
-                
-                if ( empty( $result['provider'] ) ) {
-                    $result['provider'] = $prov;
-                }
-                $result['acs_validation_report'] = array(
-                    'provider' => $prov,
-                    'initial_errors' => array(),
-                    'seo_validation' => $seoValidationResult->toArray(),
-                    'corrections_made' => $seoValidationResult->correctionsMade ?? [],
-                    'retry' => false,
-                );
-                
-                // Log success to global debug log for traceability
-                $dbg = $this->get_global_debug_log_path();
-                $entry = "[" . date('Y-m-d H:i:s') . "] PROVIDER_SUCCESS_WITH_SEO_VALIDATION ({$prov}):\n" . print_r( $result, true ) . "\nSEO_SCORE: " . $seoValidationResult->overallScore . "\nCORRECTIONS: " . implode(', ', $seoValidationResult->correctionsMade ?? []) . "\nPROMPT:\n" . $prompt . "\n---\n";
-                @file_put_contents( $dbg, $entry, FILE_APPEND | LOCK_EX );
-                
-                // Track analytics
-                $this->track_analytics( $result, $prov, $prompt, 'completed' );
-                
-                return $result;
             }
+            
+            // Always return the content with SEO validation report, even if not fully valid
+            // This allows users to see what was corrected and what issues remain
+            if ( empty( $result['provider'] ) ) {
+                $result['provider'] = $prov;
+            }
+            
+            $result['acs_validation_report'] = array(
+                'provider' => $prov,
+                'initial_errors' => $seoValidationResult->errors ?? [],
+                'warnings' => $seoValidationResult->warnings ?? [],
+                'seo_validation' => $seoValidationResult->toArray(),
+                'corrections_made' => $seoValidationResult->correctionsMade ?? [],
+                'is_valid' => $seoValidationResult->isValid ?? false,
+                'overall_score' => $seoValidationResult->overallScore ?? 0,
+                'retry' => false,
+            );
+            
+            // Log to global debug log for traceability
+            $dbg = $this->get_global_debug_log_path();
+            $status = $seoValidationResult->isValid ? 'VALID' : ( ! empty( $seoValidationResult->correctionsMade ) ? 'CORRECTED' : 'HAS_ISSUES' );
+            $entry = "[" . date('Y-m-d H:i:s') . "] PROVIDER_SUCCESS_WITH_SEO_VALIDATION ({$prov}) [{$status}]:\n" . print_r( $result, true ) . "\nSEO_SCORE: " . $seoValidationResult->overallScore . "\nCORRECTIONS: " . implode(', ', $seoValidationResult->correctionsMade ?? []) . "\nERRORS: " . count($seoValidationResult->errors ?? []) . "\nPROMPT:\n" . $prompt . "\n---\n";
+            @file_put_contents( $dbg, $entry, FILE_APPEND | LOCK_EX );
+            
+            // Track analytics
+            $this->track_analytics( $result, $prov, $prompt, 'completed' );
+            
+            return $result;
             
             // Fallback to legacy validation for compatibility
             $validation = $this->validate_generated_output( $result );
@@ -784,14 +805,28 @@ class ACS_Content_Generator {
      * @return int
      */
     private function get_word_count_target( $word_count ) {
+        // Handle range format like "750-1500"
+        if ( preg_match( '/^(\d+)-(\d+)$/', $word_count, $matches ) ) {
+            // Return the midpoint of the range
+            $min = intval( $matches[1] );
+            $max = intval( $matches[2] );
+            return intval( ( $min + $max ) / 2 );
+        }
+        
+        // Handle single number
+        if ( is_numeric( $word_count ) ) {
+            return intval( $word_count );
+        }
+        
+        // Handle named presets
         $targets = [
             'short' => 500,
-            'medium' => 800,
-            'long' => 1200,
-            'detailed' => 1800
+            'medium' => 1000,
+            'long' => 1500,
+            'detailed' => 2000
         ];
         
-        return $targets[ $word_count ] ?? 800;
+        return $targets[ $word_count ] ?? 1000;
     }
     
     /**
@@ -1799,13 +1834,31 @@ class ACS_Content_Generator {
         $excerpt = isset( $content['excerpt'] ) ? sanitize_text_field( $content['excerpt'] ) : '';
 
         // Validate generated output before creating a post
+        // For create_post, we only need essential fields (title, content)
+        // Other fields are optional and can be added later
+        $essential_fields = ['title', 'content'];
+        $missing_essential = [];
+        foreach ( $essential_fields as $field ) {
+            if ( empty( $content[ $field ] ) ) {
+                $missing_essential[] = $field;
+            }
+        }
+        
+        if ( ! empty( $missing_essential ) ) {
+            $error_msg = 'Missing essential fields: ' . implode( ', ', $missing_essential );
+            error_log( '[ACS][CREATE_POST] ' . $error_msg );
+            return new WP_Error( 'missing_fields', $error_msg );
+        }
+        
+        // Run full validation but don't fail if optional fields are missing
         $validation = $this->validate_generated_output( $content );
-        if ( $validation !== true ) {
-            // Log validation failure for debugging
+        if ( $validation !== true && is_array( $validation ) ) {
+            // Log validation warnings but don't block post creation
             $dbg = $this->get_global_debug_log_path();
-            $entry = "[" . date('Y-m-d H:i:s') . "] POST_CREATION_VALIDATION_FAILED:\n" . print_r( $validation, true ) . "\nCONTENT:\n" . print_r( $content, true ) . "\n---\n";
+            $entry = "[" . date('Y-m-d H:i:s') . "] POST_CREATION_VALIDATION_WARNINGS:\n" . print_r( $validation, true ) . "\nCONTENT:\n" . print_r( $content, true ) . "\n---\n";
             file_put_contents( $dbg, $entry, FILE_APPEND | LOCK_EX );
-            return new WP_Error( 'validation_failed', 'Generated content failed validation. See debug log for details.' );
+            // Continue with post creation despite validation warnings
+            error_log( '[ACS][CREATE_POST] Validation warnings (non-blocking): ' . implode( ', ', $validation ) );
         }
 
         $post_data = array(
@@ -2127,40 +2180,58 @@ class ACS_Content_Generator {
             $integrationLayer = new IntegrationCompatibilityLayer( $integrationConfig );
             
             // Process content through multi-pass optimizer
-            $result = $integrationLayer->processGeneratedContent( $content, $focusKeyword, $secondaryKeywords );
+            $processedContent = $integrationLayer->processGeneratedContent( $content, $focusKeyword, $secondaryKeywords );
             
-            // Convert result to expected format for backward compatibility
-            $validationResult = new stdClass();
-            $validationResult->isValid = false;
-            $validationResult->errors = [];
-            $validationResult->warnings = [];
-            $validationResult->suggestions = [];
-            $validationResult->overallScore = 0;
-            $validationResult->correctedContent = $result;
-            $validationResult->correctionsMade = [];
+            // Get the actual SEOValidationResult from optimization metadata if available
+            $validationResult = null;
             
             // Check optimization metadata
-            if ( isset( $result['_acs_optimization'] ) ) {
-                $metadata = $result['_acs_optimization'];
+            if ( isset( $processedContent['_acs_optimization'] ) ) {
+                $metadata = $processedContent['_acs_optimization'];
                 
-                if ( $metadata['status'] === 'optimized' ) {
-                    $validationResult->isValid = $metadata['compliance_achieved'] ?? false;
-                    $validationResult->overallScore = $metadata['score'] ?? 0;
-                    $validationResult->correctionsMade = ['multi_pass_optimization'];
-                } elseif ( $metadata['status'] === 'bypassed' ) {
-                    $validationResult->isValid = true; // Accept bypassed content
-                    $validationResult->overallScore = 100;
-                    $validationResult->correctionsMade = ['bypassed'];
-                } elseif ( $metadata['status'] === 'fallback' || $metadata['status'] === 'error' ) {
-                    $validationResult->isValid = true; // Accept fallback content
-                    $validationResult->overallScore = 50;
-                    $validationResult->correctionsMade = ['fallback'];
+                // Try to get the validationResult from the metadata
+                if ( isset( $metadata['validationResult'] ) && $metadata['validationResult'] instanceof SEOValidationResult ) {
+                    $validationResult = $metadata['validationResult'];
+                } elseif ( isset( $metadata['full_result']['validationResult'] ) && $metadata['full_result']['validationResult'] instanceof SEOValidationResult ) {
+                    $validationResult = $metadata['full_result']['validationResult'];
+                } elseif ( isset( $metadata['optimizationResult']['validationResult'] ) && $metadata['optimizationResult']['validationResult'] instanceof SEOValidationResult ) {
+                    $validationResult = $metadata['optimizationResult']['validationResult'];
                 }
-            } else {
-                // No optimization metadata - treat as valid for backward compatibility
-                $validationResult->isValid = true;
-                $validationResult->overallScore = 75;
             }
+            
+            // If we don't have a validation result, create one from metadata or use defaults
+            if ( ! $validationResult ) {
+                if ( ! class_exists( 'SEOValidationResult' ) ) {
+                    require_once ACS_PLUGIN_PATH . 'seo/class-seo-validation-result.php';
+                }
+                
+                $validationResult = new SEOValidationResult();
+                
+                if ( isset( $processedContent['_acs_optimization'] ) ) {
+                    $metadata = $processedContent['_acs_optimization'];
+                    
+                    if ( $metadata['status'] === 'optimized' ) {
+                        $validationResult->isValid = $metadata['compliance_achieved'] ?? false;
+                        $validationResult->overallScore = $metadata['score'] ?? 0;
+                        $validationResult->correctionsMade = ['multi_pass_optimization'];
+                    } elseif ( $metadata['status'] === 'bypassed' ) {
+                        $validationResult->isValid = true; // Accept bypassed content
+                        $validationResult->overallScore = 100;
+                        $validationResult->correctionsMade = ['bypassed'];
+                    } elseif ( $metadata['status'] === 'fallback' || $metadata['status'] === 'error' ) {
+                        $validationResult->isValid = true; // Accept fallback content
+                        $validationResult->overallScore = 50;
+                        $validationResult->correctionsMade = ['fallback'];
+                    }
+                } else {
+                    // No optimization metadata - treat as valid for backward compatibility
+                    $validationResult->isValid = true;
+                    $validationResult->overallScore = 75;
+                }
+            }
+            
+            // Set corrected content
+            $validationResult->correctedContent = $processedContent;
             
             // Log multi-pass optimization attempt
             $dbg = $this->get_global_debug_log_path();
@@ -2247,18 +2318,18 @@ class ACS_Content_Generator {
         $settings = get_option( 'acs_settings', array() );
         $seoSettings = $settings['seo'] ?? array();
         
-        // Default SEO configuration
+        // Default SEO configuration with slightly more lenient thresholds
         $defaultConfig = [
-            'minMetaDescLength' => 120,
+            'minMetaDescLength' => 110,  // Reduced from 120 to allow slightly shorter descriptions
             'maxMetaDescLength' => 156,
             'minKeywordDensity' => 0.5,
-            'maxKeywordDensity' => 2.5,
-            'maxPassiveVoice' => 10.0,
+            'maxKeywordDensity' => 3.0,  // Increased from 2.5 to 3.0 for more flexibility
+            'maxPassiveVoice' => 15.0,   // Increased from 10.0 to 15.0 for more natural writing
             'maxLongSentences' => 25.0,
             'minTransitionWords' => 30.0,
             'maxTitleLength' => 66,
             'maxSubheadingKeywordUsage' => 75.0,
-            'requireImages' => true,
+            'requireImages' => false,    // Changed to false - images are nice but not required
             'requireKeywordInAltText' => true,
             'autoCorrection' => true,
             'maxRetryAttempts' => 3

@@ -126,16 +126,16 @@ class SEOValidationPipeline {
      */
     public function __construct($config = []) {
         $this->config = array_merge([
-            'minMetaDescLength' => 120,
+            'minMetaDescLength' => 110,  // Reduced from 120 to allow slightly shorter descriptions
             'maxMetaDescLength' => 156,
             'minKeywordDensity' => 0.5,
-            'maxKeywordDensity' => 2.5,
-            'maxPassiveVoice' => 10.0,
+            'maxKeywordDensity' => 3.0,  // Increased from 2.5 to 3.0 for more flexibility
+            'maxPassiveVoice' => 15.0,   // Increased from 10.0 to 15.0 for more natural writing
             'maxLongSentences' => 25.0,
             'minTransitionWords' => 30.0,
             'maxTitleLength' => 66,
             'maxSubheadingKeywordUsage' => 75.0,
-            'requireImages' => true,
+            'requireImages' => false,    // Changed to false - images are nice but not required
             'requireKeywordInAltText' => true,
             'autoCorrection' => true,
             'maxRetryAttempts' => 3
@@ -203,24 +203,45 @@ class SEOValidationPipeline {
             // Step 1: Validate meta description
             $metaResult = $this->validateMetaDescription($correctedContent, $focusKeyword, $metrics);
             if (!$metaResult['isValid'] && $this->config['autoCorrection']) {
+                $beforeMeta = $correctedContent['meta_description'] ?? '';
                 $correctedContent = $this->correctMetaDescription($correctedContent, $focusKeyword);
-                $correctionsMade[] = 'meta_description';
+                $afterMeta = $correctedContent['meta_description'] ?? '';
+                if ($beforeMeta !== $afterMeta) {
+                    $correctionsMade[] = 'meta_description';
+                    error_log('[ACS][SEO_CORRECTION] Meta description corrected: ' . strlen($beforeMeta) . ' -> ' . strlen($afterMeta) . ' chars');
+                    // Re-validate after correction to get accurate error messages
+                    $metaResult = $this->validateMetaDescription($correctedContent, $focusKeyword, $metrics);
+                }
             }
             $this->addValidationResults($result, $metaResult, 'meta_description');
             
             // Step 2: Validate keyword density
             $densityResult = $this->validateKeywordDensity($correctedContent, $focusKeyword, $secondaryKeywords, $metrics);
             if (!$densityResult['isValid'] && $this->config['autoCorrection']) {
+                $beforeDensity = $this->densityCalculator->calculate_density($correctedContent['content'] ?? '', $focusKeyword, $secondaryKeywords);
                 $correctedContent = $this->correctKeywordDensity($correctedContent, $focusKeyword, $secondaryKeywords);
-                $correctionsMade[] = 'keyword_density';
+                $afterDensity = $this->densityCalculator->calculate_density($correctedContent['content'] ?? '', $focusKeyword, $secondaryKeywords);
+                if (abs($beforeDensity['overall_density'] - $afterDensity['overall_density']) > 0.1) {
+                    $correctionsMade[] = 'keyword_density';
+                    error_log('[ACS][SEO_CORRECTION] Keyword density corrected: ' . round($beforeDensity['overall_density'], 2) . '% -> ' . round($afterDensity['overall_density'], 2) . '%');
+                    // Re-validate after correction to get accurate error messages
+                    $densityResult = $this->validateKeywordDensity($correctedContent, $focusKeyword, $secondaryKeywords, $metrics);
+                }
             }
             $this->addValidationResults($result, $densityResult, 'keyword_density');
             
             // Step 3: Validate readability
             $readabilityResult = $this->validateReadability($correctedContent, $metrics);
             if (!$readabilityResult['isValid'] && $this->config['autoCorrection']) {
+                $beforeContent = $correctedContent['content'] ?? '';
                 $correctedContent = $this->correctReadability($correctedContent);
-                $correctionsMade[] = 'readability';
+                $afterContent = $correctedContent['content'] ?? '';
+                if ($beforeContent !== $afterContent) {
+                    $correctionsMade[] = 'readability';
+                    error_log('[ACS][SEO_CORRECTION] Readability corrected (passive voice reduced)');
+                    // Re-validate after correction to get accurate error messages
+                    $readabilityResult = $this->validateReadability($correctedContent, $metrics);
+                }
             }
             $this->addValidationResults($result, $readabilityResult, 'readability');
             
@@ -517,7 +538,19 @@ class SEOValidationPipeline {
         
         // Apply readability corrections
         $correctionResult = $this->readabilityCorrector->correctReadability($contentText);
-        $content['content'] = $correctionResult['content'] ?? $contentText;
+        
+        // Handle both return formats: 'corrected_content' or 'content'
+        $correctedText = $correctionResult['corrected_content'] ?? $correctionResult['content'] ?? $contentText;
+        
+        if ($correctedText !== $contentText) {
+            $content['content'] = $correctedText;
+            error_log('[ACS][SEO_CORRECTION] Readability corrected - passive voice and/or long sentences fixed');
+            if (!empty($correctionResult['changes_made'])) {
+                error_log('[ACS][SEO_CORRECTION] Changes: ' . json_encode($correctionResult['changes_made']));
+            }
+        } else {
+            error_log('[ACS][SEO_CORRECTION] Readability correction attempted but no changes made');
+        }
         
         return $content;
     }

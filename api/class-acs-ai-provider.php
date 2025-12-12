@@ -236,8 +236,17 @@ abstract class ACS_AI_Provider_Base implements ACS_AI_Provider_Interface {
             }
         }
 
-        $wpdb->insert(
-            $wpdb->prefix . 'acs_api_logs',
+        // Check if table exists, create if not
+        $table_name = $wpdb->prefix . 'acs_api_logs';
+        $table_exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_name ) ) === $table_name;
+        
+        if ( ! $table_exists ) {
+            $this->create_api_logs_table();
+        }
+
+        // Try to insert, but don't fail if table doesn't exist or insert fails
+        $result = $wpdb->insert(
+            $table_name,
             array(
                 'provider' => $this->provider_name,
                 'endpoint' => $endpoint,
@@ -250,6 +259,11 @@ abstract class ACS_AI_Provider_Base implements ACS_AI_Provider_Interface {
             ),
             array( '%s', '%s', '%d', '%d', '%f', '%d', '%s', '%s' )
         );
+        
+        // Log database errors but don't throw - logging is non-critical
+        if ( false === $result && ! empty( $wpdb->last_error ) ) {
+            error_log( '[ACS][API_LOG] Failed to log API call: ' . $wpdb->last_error );
+        }
 
         // Also append a human-readable entry to the global debug log in wp-content for out-of-WP debugging
         try {
@@ -287,5 +301,38 @@ abstract class ACS_AI_Provider_Base implements ACS_AI_Provider_Interface {
      */
     public function is_configured() {
         return ! empty( $this->api_key );
+    }
+
+    /**
+     * Create the API logs table if it doesn't exist.
+     *
+     * @since    1.0.0
+     */
+    private function create_api_logs_table() {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'acs_api_logs';
+        $charset_collate = $wpdb->get_charset_collate();
+
+        $sql = "CREATE TABLE IF NOT EXISTS {$table_name} (
+            id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+            provider VARCHAR(50) NOT NULL,
+            endpoint VARCHAR(255) NOT NULL,
+            request_tokens INT(11) DEFAULT 0,
+            response_tokens INT(11) DEFAULT 0,
+            cost DECIMAL(10,6) DEFAULT 0.000000,
+            status_code INT(11) DEFAULT 200,
+            error_message TEXT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY  (id),
+            KEY provider (provider),
+            KEY created_at (created_at)
+        ) {$charset_collate};";
+
+        if ( ! function_exists( 'dbDelta' ) ) {
+            require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+        }
+        
+        dbDelta( $sql );
     }
 }

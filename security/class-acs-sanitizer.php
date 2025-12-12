@@ -127,13 +127,48 @@ class ACS_Sanitizer {
      * @return   array              The sanitized input.
      */
     public static function sanitize_prompt_input( $input ) {
+        // Map 'prompt' to 'topic' for generator compatibility
+        // Also support 'topic' and 'content_topic' directly
+        $topic = '';
+        if ( isset( $input['prompt'] ) && ! empty( trim( $input['prompt'] ) ) ) {
+            $topic = sanitize_textarea_field( $input['prompt'] );
+        } elseif ( isset( $input['topic'] ) && ! empty( trim( $input['topic'] ) ) ) {
+            $topic = sanitize_textarea_field( $input['topic'] );
+        } elseif ( isset( $input['content_topic'] ) && ! empty( trim( $input['content_topic'] ) ) ) {
+            $topic = sanitize_textarea_field( $input['content_topic'] );
+        }
+        
+        // Handle keywords - can be string (comma-separated) or array
+        $keywords = '';
+        if ( isset( $input['keywords'] ) ) {
+            if ( is_array( $input['keywords'] ) ) {
+                $keywords = implode( ', ', array_map( 'sanitize_text_field', $input['keywords'] ) );
+            } else {
+                $keywords = sanitize_text_field( $input['keywords'] );
+            }
+        }
+        
+        // Handle word_count - can be string like "500-750" or "medium"
+        $word_count = isset( $input['word_count'] ) ? sanitize_text_field( $input['word_count'] ) : 'medium';
+        
         return array(
-            'prompt' => isset( $input['prompt'] ) ? sanitize_textarea_field( $input['prompt'] ) : '',
-            'keywords' => isset( $input['keywords'] ) && is_array( $input['keywords'] ) 
-                ? array_map( 'sanitize_text_field', $input['keywords'] ) : array(),
+            // Generator expects 'topic' or 'content_topic'
+            'topic' => $topic,
+            'content_topic' => $topic, // For backward compatibility
+            'prompt' => $topic, // Also keep as 'prompt' for other uses
+            'keywords' => $keywords,
+            'word_count' => $word_count,
             'tone' => isset( $input['tone'] ) ? sanitize_text_field( $input['tone'] ) : 'professional',
             'length' => isset( $input['length'] ) ? absint( $input['length'] ) : 1500,
+            'content_type' => isset( $input['content_type'] ) ? sanitize_text_field( $input['content_type'] ) : 'blog_post',
+            'provider' => isset( $input['provider'] ) ? sanitize_text_field( $input['provider'] ) : '',
+            'model' => isset( $input['model'] ) ? sanitize_text_field( $input['model'] ) : '',
+            'language' => isset( $input['language'] ) ? sanitize_text_field( $input['language'] ) : 'en',
+            'audience' => isset( $input['audience'] ) ? sanitize_text_field( $input['audience'] ) : '',
+            'structure' => isset( $input['structure'] ) ? sanitize_textarea_field( $input['structure'] ) : '',
             'include_images' => isset( $input['include_images'] ) ? (bool) $input['include_images'] : true,
+            'include_faq' => isset( $input['include_faq'] ) ? (bool) $input['include_faq'] : false,
+            'include_conclusion' => isset( $input['include_conclusion'] ) ? (bool) $input['include_conclusion'] : true,
             'publish_type' => isset( $input['publish_type'] ) ? sanitize_text_field( $input['publish_type'] ) : 'draft',
             'category' => isset( $input['category'] ) ? absint( $input['category'] ) : 0,
             'tags' => isset( $input['tags'] ) && is_array( $input['tags'] ) 

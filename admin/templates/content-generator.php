@@ -40,6 +40,7 @@ if ( ! empty( $settings['providers'] ) && is_array( $settings['providers'] ) ) {
     <!-- Generation Form -->
     <div class="acs-generator-container">
         <form id="acs-generate-form" class="acs-form">
+            <?php wp_nonce_field( 'acs_ajax_nonce', 'nonce', false ); ?>
             
             <!-- Content Type Selection -->
             <div class="acs-form-group">

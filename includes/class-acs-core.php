@@ -124,6 +124,9 @@ class ACS_Core {
          */
         if (file_exists(ACS_PLUGIN_PATH . 'includes/class-acs-error-handler.php')) {
             require_once ACS_PLUGIN_PATH . 'includes/class-acs-error-handler.php';
+            if (class_exists('ACS_Error_Handler')) {
+                ACS_Error_Handler::register_hooks();
+            }
         }
         
         /**
@@ -212,6 +215,10 @@ class ACS_Core {
             
             // Don't register menu from old admin - unified admin handles that
             // $this->loader->add_action( 'admin_menu', $plugin_admin, 'add_admin_menu' );
+
+            // Enqueue admin scripts and styles (for nonce and AJAX calls)
+            $this->loader->add_action( 'admin_enqueue_scripts', $plugin_admin, 'enqueue_styles' );
+            $this->loader->add_action( 'admin_enqueue_scripts', $plugin_admin, 'enqueue_scripts' );
 
             // Initialize admin settings and other admin init hooks
             $this->loader->add_action( 'admin_init', $plugin_admin, 'admin_init' );

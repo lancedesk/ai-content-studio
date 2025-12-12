@@ -65,6 +65,15 @@ class EnhancedPromptEngine {
             $primaryKeyword = $keywordArray[0] ?? $primaryKeyword;
         }
         
+        // Update config with actual word count from parameter (may be a range like "750-1500")
+        if (preg_match('/^(\d+)-(\d+)$/', $wordCount, $matches)) {
+            $min = intval($matches[1]);
+            $max = intval($matches[2]);
+            $this->config->targetWordCount = "{$min}-{$max}";
+        } elseif (is_numeric($wordCount)) {
+            $this->config->targetWordCount = intval($wordCount);
+        }
+        
         // Build comprehensive prompt
         $prompt = $this->buildPromptHeader($topic, $primaryKeyword, $wordCount);
         $prompt .= $this->buildSEOConstraints();
@@ -89,19 +98,29 @@ class EnhancedPromptEngine {
      * @return string Prompt header
      */
     private function buildPromptHeader($topic, $primaryKeyword, $wordCount) {
-        $wordTargets = [
-            'short' => '500',
-            'medium' => '800-1000',
-            'long' => '1200-1500',
-            'detailed' => '1800-2000'
-        ];
-        $target = $wordTargets[$wordCount] ?? '800-1000';
+        // Handle range format like "750-1500"
+        $target = $wordCount;
+        if (preg_match('/^(\d+)-(\d+)$/', $wordCount, $matches)) {
+            $min = intval($matches[1]);
+            $max = intval($matches[2]);
+            $target = "{$min}-{$max}";
+        } elseif (is_numeric($wordCount)) {
+            $target = intval($wordCount);
+        } else {
+            $wordTargets = [
+                'short' => '500',
+                'medium' => '1000',
+                'long' => '1500',
+                'detailed' => '2000'
+            ];
+            $target = $wordTargets[$wordCount] ?? '1000';
+        }
         
         $header = "You are an expert SEO copywriter specializing in creating content that passes Yoast SEO and RankMath validation.\n\n";
         $header .= "CONTENT BRIEF:\n";
         $header .= "- Topic: {$topic}\n";
         $header .= "- Primary Keyword: {$primaryKeyword}\n";
-        $header .= "- Target Word Count: {$target} words\n";
+        $header .= "- Target Word Count: {$target} words (THIS IS CRITICAL - CONTENT MUST BE THIS LENGTH)\n";
         
         if (!empty($this->config->secondaryKeywords)) {
             $header .= "- Secondary Keywords: " . implode(', ', $this->config->secondaryKeywords) . "\n";
@@ -143,9 +162,19 @@ class EnhancedPromptEngine {
         $constraints .= "   - Maximum {$keywordConstraints['maxSubheadingUsage']}% of subheadings can contain the keyword\n";
         $constraints .= "   - First paragraph MUST contain the exact primary keyword\n\n";
         
+        // Emphasize word count requirement
+        $wordCountTarget = $this->config->targetWordCount;
+        if (is_numeric($wordCountTarget)) {
+            $constraints .= "4. CONTENT LENGTH (CRITICAL):\n";
+            $constraints .= "   - You MUST write EXACTLY {$wordCountTarget} words (not less, not more)\n";
+            $constraints .= "   - Count words carefully - this is a hard requirement\n";
+            $constraints .= "   - Short content will be rejected\n\n";
+        }
+        
         // Readability constraints
         $readabilityConstraints = $this->config->getReadabilityConstraints();
-        $constraints .= "4. READABILITY:\n";
+        $sectionNum = is_numeric($this->config->targetWordCount) ? '5' : '4';
+        $constraints .= "{$sectionNum}. READABILITY:\n";
         $constraints .= "   - Passive voice: Less than {$readabilityConstraints['maxPassiveVoice']}% of sentences\n";
         $constraints .= "   - Transition words: At least {$readabilityConstraints['minTransitionWords']}% of sentences\n";
         $constraints .= "   - Long sentences: Maximum {$readabilityConstraints['maxLongSentences']}% over 20 words\n";
@@ -154,7 +183,8 @@ class EnhancedPromptEngine {
         // Image constraints
         $imageConstraints = $this->config->getImageConstraints();
         if ($imageConstraints['requireImages']) {
-            $constraints .= "5. IMAGES:\n";
+            $sectionNum = is_numeric($this->config->targetWordCount) ? '6' : '5';
+            $constraints .= "{$sectionNum}. IMAGES:\n";
             $constraints .= "   - Include at least one relevant image prompt\n";
             if ($imageConstraints['requireKeywordInAltText']) {
                 $constraints .= "   - Alt text must include primary keyword or synonym\n";
@@ -213,6 +243,17 @@ class EnhancedPromptEngine {
      */
     private function buildContentGuidelines() {
         $guidelines = "CONTENT WRITING GUIDELINES:\n\n";
+        
+        // Emphasize word count requirement
+        $wordCountTarget = $this->config->targetWordCount;
+        if (is_numeric($wordCountTarget)) {
+            $guidelines .= "WORD COUNT (MANDATORY):\n";
+            $guidelines .= "- You MUST write EXACTLY {$wordCountTarget} words\n";
+            $guidelines .= "- This is a hard requirement - content shorter than {$wordCountTarget} words will be REJECTED\n";
+            $guidelines .= "- Count your words carefully before submitting\n";
+            $guidelines .= "- Expand your content with detailed explanations, examples, and practical tips\n\n";
+        }
+        
         $guidelines .= "TONE & STYLE:\n";
         $guidelines .= "- Professional yet conversational\n";
         $guidelines .= "- Authoritative and trustworthy\n";

@@ -532,10 +532,14 @@ class MultiPassSEOOptimizer {
         // Calculate improvements from previous iteration
         if ($iteration > 0 && !empty($this->progressData['iterations'])) {
             $previousIteration = end($this->progressData['iterations']);
+            $previousScore = isset($previousIteration['score']) ? $previousIteration['score'] : 0;
+            $previousErrorCount = isset($previousIteration['errorCount']) ? $previousIteration['errorCount'] : 0;
+            $previousWarningCount = isset($previousIteration['warningCount']) ? $previousIteration['warningCount'] : 0;
+            
             $iterationData['improvements'] = [
-                'scoreImprovement' => $result->overallScore - $previousIteration['score'],
-                'errorReduction' => $previousIteration['errorCount'] - count($result->errors),
-                'warningReduction' => $previousIteration['warningCount'] - count($result->warnings)
+                'scoreImprovement' => $result->overallScore - $previousScore,
+                'errorReduction' => $previousErrorCount - count($result->errors),
+                'warningReduction' => $previousWarningCount - count($result->warnings)
             ];
         }
         

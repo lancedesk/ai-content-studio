@@ -619,8 +619,10 @@ class ACS_Admin {
      * @since    1.0.0
      */
     public function ajax_generate_content() {
-        // Verify nonce
-        if ( ! wp_verify_nonce( $_POST['nonce'], 'acs_ajax_nonce' ) ) {
+        // Verify nonce - check both POST and REQUEST for compatibility
+        $nonce = isset( $_POST['nonce'] ) ? sanitize_text_field( $_POST['nonce'] ) : '';
+        
+        if ( ! $nonce || ! wp_verify_nonce( $nonce, 'acs_ajax_nonce' ) ) {
             $this->send_error_response( 'security_error', array( 'message' => __( 'Security check failed.', 'ai-content-studio' ) ) );
             return;
         }
@@ -793,15 +795,36 @@ class ACS_Admin {
             $post_id = $generator->create_post( $generated, $tags );
         }
 
-        if ( $post_id ) {
-            wp_send_json_success( array(
-                'post_id' => $post_id,
-                'edit_link' => get_edit_post_link( $post_id ),
-                'permalink' => get_permalink( $post_id ),
+        // Check if result is a WP_Error
+        if ( is_wp_error( $post_id ) ) {
+            error_log( '[ACS][CREATE_POST] Error: ' . $post_id->get_error_message() );
+            wp_send_json_error( array(
+                'message' => $post_id->get_error_message(),
+                'code' => $post_id->get_error_code()
             ) );
+            return;
         }
 
-        wp_send_json_error( __( 'Failed to create post.', 'ai-content-studio' ) );
+        // Check if we got a valid post ID
+        if ( $post_id && is_numeric( $post_id ) && $post_id > 0 ) {
+            $edit_link = get_edit_post_link( $post_id, 'raw' );
+            // Fallback if get_edit_post_link returns false or empty
+            if ( empty( $edit_link ) ) {
+                $edit_link = admin_url( 'post.php?action=edit&post=' . intval( $post_id ) );
+            }
+            
+            wp_send_json_success( array(
+                'post_id' => intval( $post_id ),
+                'edit_link' => $edit_link,
+                'edit_url' => $edit_link, // Also include edit_url for backward compatibility
+                'permalink' => get_permalink( $post_id ),
+            ) );
+            return;
+        }
+
+        wp_send_json_error( array(
+            'message' => __( 'Failed to create post. No valid post ID returned.', 'ai-content-studio' )
+        ) );
     }
 
     /**

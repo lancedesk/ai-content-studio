@@ -23,6 +23,13 @@ if ( ! defined( 'ABSPATH' ) ) {
 class ACS_Error_Handler {
 
 	/**
+	 * Singleton instance for backwards compatibility with instance-style calls.
+	 *
+	 * @var ACS_Error_Handler|null
+	 */
+	private static $instance = null;
+
+	/**
 	 * Error codes and their user-friendly messages
 	 *
 	 * @var array
@@ -110,6 +117,13 @@ class ACS_Error_Handler {
 	 * @return WP_Error
 	 */
 	public static function create_error( $code, $message = '', $data = array() ) {
+		// Support calling with a context array as the second parameter
+		if ( is_array( $message ) && empty( $data ) ) {
+			$context = $message;
+			$message = isset( $context['message'] ) ? $context['message'] : '';
+			$data = $context;
+		}
+
 		if ( empty( $message ) ) {
 			$message = self::get_user_message( $code );
 		}
@@ -120,7 +134,7 @@ class ACS_Error_Handler {
 			'timestamp'  => current_time( 'mysql' ),
 		), $data );
 
-		// Log the error
+		// Log the error (accepts either message or context array)
 		self::log_error( $code, $message, $error_data );
 
 		return new WP_Error( $code, $message, $error_data );
@@ -177,6 +191,28 @@ class ACS_Error_Handler {
 	 * @param array  $data    Additional error data.
 	 */
 	public static function log_error( $code, $message, $data = array() ) {
+		// Support call pattern where $message may actually be a context array.
+		$level = 'error';
+		if ( is_array( $message ) ) {
+			$context = $message;
+			$message = isset( $context['message'] ) ? $context['message'] : self::get_user_message( $code );
+			// If $data is a string, it's likely the level (e.g., 'warning')
+			if ( is_string( $data ) ) {
+				$level = $data;
+				$data = $context;
+			} elseif ( is_array( $data ) && ! empty( $data ) ) {
+				$data = array_merge( $context, $data );
+			} else {
+				$data = $context;
+			}
+		} elseif ( is_string( $data ) ) {
+			// If second param is a message and third is a string, interpret third as level
+			$level = $data;
+			$data = array();
+		} else {
+			$level = isset( $data['level'] ) ? $data['level'] : 'error';
+		}
+
 		if ( class_exists( 'ACS_Logger' ) ) {
 			ACS_Logger::error( sprintf( '[%s] %s', $code, $message ), $data );
 		}
@@ -184,6 +220,24 @@ class ACS_Error_Handler {
 		// Also log to WordPress debug log if enabled
 		if ( defined( 'WP_DEBUG' ) && WP_DEBUG && defined( 'WP_DEBUG_LOG' ) && WP_DEBUG_LOG ) {
 			error_log( sprintf( '[ACS Error] [%s] %s - %s', $code, $message, wp_json_encode( $data ) ) );
+		}
+
+		// Persist error to database if table exists
+		global $wpdb;
+		$table_name = $wpdb->prefix . 'acs_error_logs';
+		$exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_name ) );
+		if ( $exists === $table_name ) {
+			$wpdb->insert(
+				$table_name,
+				array(
+					'error_code' => sanitize_text_field( $code ),
+					'message'    => sanitize_textarea_field( $message ),
+					'data'       => wp_json_encode( $data ),
+						'level'      => sanitize_text_field( $level ),
+					'created_at' => current_time( 'mysql' ),
+				),
+				array( '%s', '%s', '%s', '%s', '%s' )
+			);
 		}
 	}
 
@@ -474,6 +528,99 @@ class ACS_Error_Handler {
 
 		// Set custom error handler for non-fatal errors
 		set_error_handler( array( __CLASS__, 'handle_error' ), E_ALL & ~E_NOTICE & ~E_STRICT & ~E_DEPRECATED );
+	}
+
+	/**
+	 * Return singleton instance for compatibility with code that calls get_instance().
+	 *
+	 * @return ACS_Error_Handler
+	 */
+	public static function get_instance() {
+		if ( null === self::$instance ) {
+			self::$instance = new self();
+		}
+		return self::$instance;
+	}
+
+	/**
+	 * Private constructor used for singleton pattern.
+	 */
+	private function __construct() {
+		// No initialization required for now.
+	}
+
+	/**
+	 * Create the database table for error logs.
+	 *
+	 * @return void
+	 */
+	public function create_db_table() {
+		global $wpdb;
+
+		$table_name = $wpdb->prefix . 'acs_error_logs';
+		$charset_collate = $wpdb->get_charset_collate();
+
+		$sql = "CREATE TABLE {$table_name} (
+			id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+			error_code VARCHAR(100) NOT NULL,
+			message TEXT NOT NULL,
+			data LONGTEXT NULL,
+			level VARCHAR(20) DEFAULT 'error',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY  (id)
+		) {$charset_collate};";
+
+		if ( ! function_exists( 'dbDelta' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+		}
+		dbDelta( $sql );
+	}
+
+	/**
+	 * Cleanup old error logs older than the supplied number of days.
+	 *
+	 * @param int $days Number of days to keep.
+	 * @return int Number of rows deleted
+	 */
+	public function cleanup_old_errors( $days = 30 ) {
+		global $wpdb;
+		$table_name = $wpdb->prefix . 'acs_error_logs';
+
+		// Ensure table exists
+		$exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_name ) );
+		if ( $exists !== $table_name ) {
+			return 0;
+		}
+
+		$result = $wpdb->query( $wpdb->prepare( "DELETE FROM {$table_name} WHERE created_at < DATE_SUB(NOW(), INTERVAL %d DAY)", $days ) );
+		return $result;
+	}
+
+	/**
+	 * Return an array-compatible AJAX error response for a given WP_Error or string code.
+	 *
+	 * @param WP_Error|string $error Error object or code.
+	 * @return array
+	 */
+	public function get_ajax_error_response( $error ) {
+		if ( is_wp_error( $error ) ) {
+			$code = $error->get_error_code();
+			$message = $error->get_error_message();
+			$data = $error->get_error_data();
+		} else {
+			$code = $error;
+			$message = self::get_user_message( $code );
+			$data = array();
+		}
+
+		return array(
+			'code' => $code,
+			'message' => $message,
+			'retryable' => self::is_retryable( $code ),
+			'retry_delay' => self::is_retryable( $code ) ? self::get_retry_delay( 1 ) : 0,
+			'max_retries' => self::is_retryable( $code ) ? self::get_max_retries() : 0,
+			'data' => (array) $data,
+		);
 	}
 
 	/**

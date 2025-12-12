@@ -357,7 +357,7 @@ class ACS_Unified_Admin {
         // Localize script with WordPress-compatible data
         wp_localize_script('acs-unified-admin', 'acsAdmin', [
             'ajaxUrl' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('acs_admin_nonce'),
+            'nonce' => wp_create_nonce('acs_ajax_nonce'),
             'currentPage' => $current_page,
             'restUrl' => rest_url('wp/v2/'),
             'restNonce' => wp_create_nonce('wp_rest'),
@@ -663,7 +663,7 @@ class ACS_Unified_Admin {
      * Handle notice dismissal
      */
     public function handle_dismiss_notice() {
-        check_ajax_referer('acs_admin_nonce', 'nonce');
+        check_ajax_referer('acs_ajax_nonce', 'nonce');
         
         $notice_id = sanitize_text_field($_POST['notice_id'] ?? '');
         if (empty($notice_id)) {

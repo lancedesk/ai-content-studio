@@ -46,6 +46,21 @@ class SEOValidationResult {
     public $overallScore;
     
     /**
+     * @var array Corrected content after validation fixes
+     */
+    public $correctedContent;
+    
+    /**
+     * @var array List of corrections that were made
+     */
+    public $correctionsMade;
+    
+    /**
+     * @var array Validation metrics
+     */
+    public $metrics;
+    
+    /**
      * Constructor
      *
      * @param bool $isValid Overall validation status
@@ -140,17 +155,28 @@ class SEOValidationResult {
     /**
      * Convert to array for JSON serialization
      *
+     * @param bool $includeContent Whether to include correctedContent (exclude to avoid circular references)
      * @return array Validation result as array
      */
-    public function toArray() {
-        return [
+    public function toArray($includeContent = false) {
+        $result = [
             'isValid' => $this->isValid,
             'errors' => $this->errors,
             'warnings' => $this->warnings,
             'suggestions' => $this->suggestions,
             'overallScore' => $this->overallScore,
-            'issueCount' => $this->getIssueCount()
+            'issueCount' => $this->getIssueCount(),
+            'correctionsMade' => $this->correctionsMade ?? [],
+            'metrics' => $this->metrics ?? []
         ];
+        
+        // Only include correctedContent if explicitly requested (to avoid circular references)
+        // The corrected content is already in the main result array, so we don't need it here
+        if ($includeContent && !empty($this->correctedContent)) {
+            $result['correctedContent'] = $this->correctedContent;
+        }
+        
+        return $result;
     }
     
     /**

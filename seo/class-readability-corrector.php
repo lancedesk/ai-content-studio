@@ -185,6 +185,7 @@ class ReadabilityCorrector {
         return [
             'original_content' => $content,
             'corrected_content' => $correctedContent,
+            'content' => $correctedContent, // Also include 'content' key for compatibility
             'changes_made' => $changes,
             'iterations' => $iterations,
             'final_analysis' => $this->analyzeReadability($correctedContent)
@@ -217,7 +218,21 @@ class ReadabilityCorrector {
             $correctedSentence = $this->convertPassiveToActive($originalSentence);
             
             if ($correctedSentence !== $originalSentence) {
-                $correctedContent = str_replace($originalSentence, $correctedSentence, $correctedContent);
+                // Use more reliable replacement that handles HTML content
+                // First try exact match
+                if (strpos($correctedContent, $originalSentence) !== false) {
+                    $count = 0;
+                    $correctedContent = str_replace($originalSentence, $correctedSentence, $correctedContent, $count);
+                } else {
+                    // Try with HTML tags stripped for matching
+                    $plainOriginal = strip_tags($originalSentence);
+                    $plainCorrected = strip_tags($correctedSentence);
+                    if (strpos(strip_tags($correctedContent), $plainOriginal) !== false) {
+                        // Replace in plain text version
+                        $correctedContent = str_replace($plainOriginal, $plainCorrected, strip_tags($correctedContent));
+                    }
+                }
+                
                 $changes[] = [
                     'type' => 'passive_to_active',
                     'original' => $originalSentence,
@@ -225,6 +240,12 @@ class ReadabilityCorrector {
                     'confidence' => $passiveInfo['confidence']
                 ];
             }
+        }
+        
+        if (!empty($changes)) {
+            error_log('[ACS][READABILITY] Fixed ' . count($changes) . ' passive voice sentences');
+        } else {
+            error_log('[ACS][READABILITY] No passive voice sentences could be automatically corrected');
         }
         
         return [
@@ -254,15 +275,26 @@ class ReadabilityCorrector {
         $correctedContent = $content;
         $changes = [];
         
-        // Process long sentences
+        // Process long sentences (split sentences over 20 words, not just 25+)
         foreach ($analysis['longSentenceDetails'] as $longSentence) {
-            if ($longSentence['wordCount'] > 25) { // Only split very long sentences
+            if ($longSentence['wordCount'] > 20) { // Split sentences over 20 words (the threshold)
                 $originalSentence = $longSentence['sentence'];
                 $splitSentences = $this->splitLongSentence($originalSentence);
                 
                 if (count($splitSentences) > 1) {
                     $newSentence = implode('. ', $splitSentences) . '.';
-                    $correctedContent = str_replace($originalSentence, $newSentence, $correctedContent);
+                    // Use more reliable replacement - try exact match first
+                    if (strpos($correctedContent, $originalSentence) !== false) {
+                        $count = 0;
+                        $correctedContent = str_replace($originalSentence, $newSentence, $correctedContent, $count);
+                    } else {
+                        // Try with HTML stripped
+                        $plainOriginal = strip_tags($originalSentence);
+                        $plainNew = strip_tags($newSentence);
+                        if (strpos(strip_tags($correctedContent), $plainOriginal) !== false) {
+                            $correctedContent = str_replace($plainOriginal, $plainNew, strip_tags($correctedContent));
+                        }
+                    }
                     
                     $changes[] = [
                         'type' => 'sentence_split',
@@ -273,6 +305,12 @@ class ReadabilityCorrector {
                     ];
                 }
             }
+        }
+        
+        if (!empty($changes)) {
+            error_log('[ACS][READABILITY] Split ' . count($changes) . ' long sentences');
+        } else {
+            error_log('[ACS][READABILITY] No long sentences could be automatically split');
         }
         
         return [

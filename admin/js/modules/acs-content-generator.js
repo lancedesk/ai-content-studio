@@ -22,7 +22,8 @@
             isGenerating: false,
             currentGeneration: null,
             previewTimeout: null,
-            formData: {}
+            formData: {},
+            lastGeneratedContent: null  // Store last generated content for create post
         },
 
         // Initialize the content generator
@@ -351,6 +352,9 @@
             this.hideProgress();
             
             if (response.success && response.data) {
+                // Store the generated content for create post functionality
+                this.state.lastGeneratedContent = response.data;
+                
                 this.showSuccessMessage(response.data);
                 this.displayGenerationResult(response.data);
                 
@@ -425,7 +429,20 @@
 
         // Display generation result
         displayGenerationResult: function(data) {
-            var resultHtml = '<div class="acs-generation-result">' +
+            // Store data attributes for create post functionality
+            var dataAttrs = '';
+            if (data.meta_description) {
+                dataAttrs += ' data-meta-description="' + this.escapeHtml(data.meta_description) + '"';
+            }
+            if (data.focus_keyword) {
+                dataAttrs += ' data-focus-keyword="' + this.escapeHtml(data.focus_keyword) + '"';
+            }
+            if (data.tags) {
+                var tagsStr = Array.isArray(data.tags) ? data.tags.join(', ') : data.tags;
+                dataAttrs += ' data-tags="' + this.escapeHtml(tagsStr) + '"';
+            }
+            
+            var resultHtml = '<div class="acs-generation-result"' + dataAttrs + '>' +
                 '<div class="acs-generation-result__header">' +
                 '<h2>' + (data.title || 'Generated Content') + '</h2>' +
                 '<div class="acs-generation-result__actions">' +
@@ -474,29 +491,89 @@
         createPost: function(generationId) {
             var self = this;
             
+            // Get the generated content from state (this should have all the data)
+            var contentData = this.state.lastGeneratedContent;
+            
+            // If not in state, try to extract from displayed result
+            if (!contentData || !contentData.title || !contentData.content) {
+                var $result = $('.acs-generation-result');
+                if ($result.length) {
+                    contentData = {
+                        title: $result.find('h2').text() || '',
+                        content: $result.find('.acs-generation-result__preview').html() || '',
+                        meta_description: $result.data('meta-description') || $result.attr('data-meta-description') || '',
+                        focus_keyword: $result.data('focus-keyword') || $result.attr('data-focus-keyword') || '',
+                        tags: $result.data('tags') || $result.attr('data-tags') || ''
+                    };
+                }
+            }
+            
+            // Fallback: try to get from state even if incomplete
+            if (!contentData && this.state.lastGeneratedContent) {
+                contentData = this.state.lastGeneratedContent;
+            }
+            
+            if (!contentData || !contentData.title || !contentData.content) {
+                console.error('Content data:', contentData);
+                self.showErrorMessage('No content available to create post. Please generate content first.');
+                return;
+            }
+            
+            // Prepare data for AJAX request - send all available fields
+            var postData = {
+                action: 'acs_create_post',
+                nonce: this.config.nonce,
+                title: contentData.title || '',
+                content: contentData.content || '',
+                meta_description: contentData.meta_description || '',
+                focus_keyword: contentData.focus_keyword || contentData.focusKeyword || '',
+                tags: Array.isArray(contentData.tags) ? contentData.tags.join(', ') : (contentData.tags || ''),
+                // Include optional fields if available
+                slug: contentData.slug || '',
+                excerpt: contentData.excerpt || '',
+                secondary_keywords: Array.isArray(contentData.secondary_keywords) ? contentData.secondary_keywords.join(', ') : (contentData.secondary_keywords || '')
+            };
+            
+            // Log what we're sending for debugging
+            console.log('[ACS] Creating post with data:', {
+                title: postData.title ? 'present' : 'missing',
+                content: postData.content ? 'present (' + (postData.content.length) + ' chars)' : 'missing',
+                meta_description: postData.meta_description ? 'present' : 'missing',
+                focus_keyword: postData.focus_keyword ? 'present' : 'missing'
+            });
+            
             $.ajax({
                 url: this.config.ajaxUrl,
                 type: 'POST',
-                data: {
-                    action: 'acs_create_post',
-                    nonce: this.config.nonce,
-                    generation_id: generationId
-                },
+                data: postData,
                 success: function(response) {
                     if (response.success && response.data && response.data.post_id) {
-                        var editUrl = response.data.edit_url;
+                        var editLink = response.data.edit_link || response.data.edit_url;
+                        if (!editLink) {
+                            // Fallback: construct edit link from post_id
+                            editLink = acsAdmin.config.adminUrl.replace('admin.php', 'post.php?action=edit&post=' + response.data.post_id);
+                        }
+                        
                         self.showSuccessMessage('Post created successfully!');
                         
                         // Redirect to edit page
                         setTimeout(function() {
-                            window.location.href = editUrl;
+                            if (editLink && editLink !== 'undefined') {
+                                window.location.href = editLink;
+                            } else {
+                                self.showErrorMessage('Could not determine edit URL. Post ID: ' + response.data.post_id);
+                            }
                         }, 1000);
                     } else {
                         self.showErrorMessage(response.data?.message || 'Failed to create post');
                     }
                 },
-                error: function() {
-                    self.showErrorMessage('Failed to create post. Please try again.');
+                error: function(xhr, status, error) {
+                    var errorMsg = 'Failed to create post. Please try again.';
+                    if (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) {
+                        errorMsg = xhr.responseJSON.data.message;
+                    }
+                    self.showErrorMessage(errorMsg);
                 }
             });
         },
